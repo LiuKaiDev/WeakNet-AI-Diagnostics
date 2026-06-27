@@ -122,8 +122,8 @@ sequenceDiagram
 ├── client/
 │   ├── README_CLIENT.md
 │   ├── README_LIBRARY.md
-│   ├── bin/
-│   ├── lib/
+│   ├── bin/                    # generated after build
+│   ├── lib/                    # generated after build
 │   ├── client.cpp
 │   ├── test_client.cpp
 │   ├── test_network_quality.cpp
@@ -144,11 +144,11 @@ sequenceDiagram
 │       └── log-analysis-tools/
 └── server/
     ├── Makefile
-    ├── bin/
-    ├── build/
+    ├── bin/                    # generated after build
+    ├── build/                  # generated after build
     ├── include/
     ├── src/
-    └── vmlinux.h
+    └── vmlinux.h               # generated from kernel BTF
 ```
 
 ## 运行环境
