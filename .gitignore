@@ -1,0 +1,59 @@
+# Build outputs
+
+server/bin/
+server/build/
+client/bin/
+client/lib/
+client/test_client
+
+# Generated kernel header
+
+server/vmlinux.h
+
+# Logs
+
+*.log
+logs/server/*
+weaknet-server.log
+
+# Binary / object files
+
+*.o
+*.so
+*.a
+*.bin
+core
+core.*
+
+# Backup files
+
+*.bak
+*.bak.*
+
+# Python cache
+
+**pycache**/
+*.pyc
+*.pyo
+*.pyd
+
+# Python virtual env
+
+.venv/
+venv/
+env/
+
+# Environment files
+
+.env
+.env.*
+
+# Editor / system files
+
+.vscode/
+.idea/
+.DS_Store
+
+# Optional generated data
+
+optional/experimental/log-analysis-tools/network_knowledge_vectorstore_local/

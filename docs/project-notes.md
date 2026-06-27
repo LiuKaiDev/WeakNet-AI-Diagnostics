@@ -1,8 +1,8 @@
-# WeakNet Diagnostics 项目说明
+# WeakNet AI Diagnostics 项目说明
 
 本文档是早期项目说明的归档版本，主项目介绍以根目录 `README.md` 为准。
 
-WeakNet Diagnostics 是一个面向 Linux 环境的网络诊断与弱网监控系统，基于 eBPF 和 DBus 提供网络接口状态监控、流量分析、网络质量评估、事件通知和客户端调用接口。
+WeakNet AI Diagnostics 是一个面向 Linux 环境的网络诊断与弱网监控系统，基于 eBPF 和 DBus 提供网络接口状态监控、流量分析、网络质量评估、事件通知和客户端调用接口。仓库标识为 `WeakNet-AI-Diagnostics`。
 
 ## 快速开始
 
@@ -147,7 +147,7 @@ make test-performance
 
 ## 实验性日志分析工具
 
-仓库中保留了一组实验性 Python 日志分析工具，位于 `optional/experimental/log-analysis-tools/` 目录。该目录用于离线解析服务端日志和尝试检索式分析流程，不属于 WeakNet Diagnostics 的核心运行链路。
+仓库中保留了一组实验性 Python 日志分析工具，位于 `optional/experimental/log-analysis-tools/` 目录。该目录用于离线解析服务端日志和尝试检索式分析流程，不属于 WeakNet AI Diagnostics 的核心运行链路。
 
 ```bash
 cd optional/experimental/log-analysis-tools

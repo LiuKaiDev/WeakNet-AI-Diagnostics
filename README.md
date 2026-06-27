@@ -1,10 +1,10 @@
-# WeakNet Diagnostics
+# WeakNet AI Diagnostics
 
 ## 项目简介
 
-WeakNet Diagnostics 是一个面向 Linux 环境的网络诊断与弱网监控系统，由本人独立开发完成。项目通过 DBus 提供服务端能力，并提供 C/C++ 客户端调用接口，用于检测网络接口、RTT、TCP 丢包率、网络质量状态和基础流量状态。
+WeakNet AI Diagnostics 是一个面向 Linux 环境的网络诊断与弱网监控系统，核心链路由 C++、DBus 和 Linux 网络监控模块组成，并提供实验性日志分析工具用于辅助排查网络异常。
 
-当前仓库整理为首次公开发布版本，重点保留已经完成部署验证的服务端、客户端、DBus 通信、网卡检测、健康检查和 Ping 功能。
+当前仓库标识为 `WeakNet-AI-Diagnostics`，整理为首次公开发布版本。项目重点保留已经完成部署验证的服务端、客户端、DBus 通信、网卡检测、健康检查和 Ping 功能。
 
 ## 功能特性
 
@@ -159,4 +159,4 @@ kill "$SERVER_PID"
 
 本项目由本人独立完成需求设计、模块开发、服务器部署、编译修复和功能验证。本仓库是本地开发完成后的首次公开整理版本。
 
-`optional/experimental/log-analysis-tools/` 中的脚本是实验性日志分析工具，依赖额外 Python 包和外部模型服务，不是 WeakNet Diagnostics 的核心运行链路。
+`optional/experimental/log-analysis-tools/` 中的脚本是实验性日志分析工具，依赖额外 Python 包和外部模型服务，不是 WeakNet AI Diagnostics 的核心运行链路。

@@ -1,8 +1,8 @@
 # Experimental Log Analysis Tools
 
-本目录保存实验性日志分析工具，用于解析 WeakNet Diagnostics 服务端输出、按时间点整理网络指标，并尝试通过本地知识库和外部模型服务生成分析报告。
+本目录保存实验性日志分析工具，用于解析 WeakNet AI Diagnostics 服务端输出、按时间点整理网络指标，并尝试通过本地知识库和外部模型服务生成分析报告。
 
-这些工具不属于主项目核心运行链路。WeakNet Diagnostics 的服务端、客户端动态库、DBus 通信、网卡检测、健康检查和 Ping 功能均不依赖本目录。
+这些工具不属于主项目核心运行链路。WeakNet AI Diagnostics 的服务端、客户端动态库、DBus 通信、网卡检测、健康检查和 Ping 功能均不依赖本目录。
 
 ## 主要功能
 

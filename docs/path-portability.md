@@ -1,4 +1,4 @@
-# WeakNet Diagnostics 路径整理说明
+# WeakNet AI Diagnostics 路径整理说明
 
 ## 🎯 优化目标
 
@@ -135,7 +135,7 @@ make test-all
 ## 📁 项目结构
 
 ```
-WeakNet Diagnostics/
+WeakNet-AI-Diagnostics/
 ├── server/                 # 服务器端
 │   ├── bin/               # 编译产物
 │   ├── build/             # eBPF对象文件

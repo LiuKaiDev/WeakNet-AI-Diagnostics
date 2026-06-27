@@ -2,9 +2,9 @@
 
 ## 概述
 
-本指南说明 `optional/experimental/log-analysis-tools/` 中实验性日志分析工具的使用方式。工具可以实时捕获 WeakNet Diagnostics 服务端日志，解析网络指标，并结合本地知识库或外部模型服务生成时间点分析结果。
+本指南说明 `optional/experimental/log-analysis-tools/` 中实验性日志分析工具的使用方式。工具可以实时捕获 WeakNet AI Diagnostics 服务端日志，解析网络指标，并结合本地知识库或外部模型服务生成时间点分析结果。
 
-该目录不是 WeakNet Diagnostics 的核心运行链路。主项目功能以服务端、客户端动态库、DBus 通信、网卡检测、健康检查和 Ping 功能为准。
+该目录不是 WeakNet AI Diagnostics 的核心运行链路。主项目功能以服务端、客户端动态库、DBus 通信、网卡检测、健康检查和 Ping 功能为准。
 
 ## 系统架构
 
