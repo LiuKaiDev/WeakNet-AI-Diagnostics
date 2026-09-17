@@ -44,7 +44,7 @@ class NetTrafficAnalyzer {
 public:
     static std::shared_ptr<NetTrafficAnalyzer> getInstance();
 
-    // 设置 eBPF 对象路径，默认 "build/flow_rate.bpf.o"
+    // 设置 eBPF 对象路径；TrafficAnalyzer resolves the build/install path.
     void setBpfObjectPath(const std::string& path);
 
     // 初始化并附加到内核（按接口过滤），成功返回 true
@@ -82,7 +82,7 @@ private:
     static std::once_flag s_onceFlag;
     static std::shared_ptr<NetTrafficAnalyzer> s_instance;
 
-    std::string bpfObjPath_ = "build/flow_rate.bpf.o";
+    std::string bpfObjPath_ = "server/build/flow_rate.bpf.o";
     std::string boundIface_;
 
     // 句柄

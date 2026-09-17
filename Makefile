@@ -1,74 +1,81 @@
-# 包含配置文件
-include config.mk
+# Temporary V1 compatibility wrapper around the Phase 1 CMake build.
 
-CC=g++
-CXXFLAGS=-std=c++17 -O2 -Wall -Wextra -Wpedantic -pthread
-LDFLAGS=`pkg-config --libs dbus-1` -lglog -pthread
-INCLUDES=`pkg-config --cflags dbus-1`
+CMAKE ?= cmake
+CTEST ?= ctest
+CMAKE_GENERATOR ?= Ninja
+CMAKE_BUILD_DIR ?= build/make-compat
+CMAKE_BUILD_TYPE ?= RelWithDebInfo
+ENABLE_EBPF ?= ON
+BUILD_TESTING ?= ON
 
-SRC_SERVER=server.cpp serializer.cpp
-SRC_CLIENT_LIB=client/client.cpp server/src/serializer.cpp
-SRC_CLIENT_TEST=client/test_client.cpp
+CMAKE_CONFIGURE = $(CMAKE) -S . -B "$(CMAKE_BUILD_DIR)" \
+	-G "$(CMAKE_GENERATOR)" \
+	-DCMAKE_BUILD_TYPE="$(CMAKE_BUILD_TYPE)" \
+	-DENABLE_EBPF="$(ENABLE_EBPF)" \
+	-DBUILD_TESTING="$(BUILD_TESTING)"
 
-all: dirs server-client-lib
+.PHONY: all configure dirs server-client-lib server-client clean \
+	run-server run-client test-client test-lib test-events test-all \
+	test-ping test-performance
 
-server-client-lib:
-	@$(MAKE) -C server
-	@echo "编译WeakNet客户端动态库..."
-	@mkdir -p $(CLIENT_LIB_DIR) $(CLIENT_BIN_DIR)
-	$(CC) $(CXXFLAGS) $(INCLUDES) -I$(SERVER_DIR)/include -I$(CLIENT_DIR) -fPIC -shared -o $(CLIENT_LIB_DIR)/libweaknet.so $(SRC_CLIENT_LIB) $(LDFLAGS)
-	@echo "编译WeakNet客户端测试程序..."
-	$(CC) $(CXXFLAGS) $(INCLUDES) -I$(SERVER_DIR)/include -I$(CLIENT_DIR) -o $(CLIENT_BIN_DIR)/test-client $(SRC_CLIENT_TEST) -L$(CLIENT_LIB_DIR) -lweaknet $(LDFLAGS)
+all: server-client-lib
 
-# 支持原来的命名，保持兼容性
+configure:
+	@$(CMAKE_CONFIGURE)
+
+dirs: configure
+
+server-client-lib: configure
+	@$(CMAKE) --build "$(CMAKE_BUILD_DIR)" --target weaknet_legacy_stage --parallel
+
 server-client: server-client-lib
 
-dirs:
-	mkdir -p $(BUILD_DIR) $(BIN_DIR) $(CLIENT_BIN_DIR) $(CLIENT_LIB_DIR)
-
-.PHONY: clean run-server run-client
-
 clean:
-	rm -rf $(BUILD_DIR) $(BIN_DIR) $(CLIENT_BIN_DIR) $(CLIENT_LIB_DIR)
-	rm -f *.bin
+	@$(CMAKE) -E rm -rf "$(CMAKE_BUILD_DIR)" \
+		server/bin server/build client/bin client/lib
 
-run-server: $(BIN_DIR)/weaknet-dbus-server
-	DBUS_SESSION_BUS_ADDRESS=$$DBUS_SESSION_BUS_ADDRESS $(BIN_DIR)/weaknet-dbus-server
+run-server: server-client-lib
+	@DBUS_SESSION_BUS_ADDRESS=$$DBUS_SESSION_BUS_ADDRESS \
+		./server/bin/weaknet-dbus-server
 
 test-client: server-client-lib
 	@if [ "$(COMMAND)" = "" ]; then \
 		echo "用法: make test-client COMMAND=[all|get|health|file|ping|check|events|event-types|test-*]"; \
-		echo "示例: make test-client COMMAND=all"; \
-		echo "      make test-client COMMAND=get"; \
-		echo "      make test-client COMMAND=\"ping google.com\""; \
-		echo "      make test-client COMMAND=test-basic"; \
+		echo "示例: make test-client COMMAND=get"; \
 	else \
-		echo "运行客户端测试程序: $(COMMAND)"; \
-		LD_LIBRARY_PATH=$(CLIENT_LIB_DIR):$$LD_LIBRARY_PATH DBUS_SESSION_BUS_ADDRESS=$$DBUS_SESSION_BUS_ADDRESS $(CLIENT_BIN_DIR)/test-client $(COMMAND); \
+		echo "运行客户端手动验证工具: $(COMMAND)"; \
+		LD_LIBRARY_PATH=./client/lib:$$LD_LIBRARY_PATH \
+		DBUS_SESSION_BUS_ADDRESS=$$DBUS_SESSION_BUS_ADDRESS \
+		./client/bin/test-client $(COMMAND); \
 	fi
 
 test-lib: server-client-lib
-	@echo "运行动态库基本功能测试..."
-	LD_LIBRARY_PATH=$(CLIENT_LIB_DIR):$$LD_LIBRARY_PATH DBUS_SESSION_BUS_ADDRESS=$$DBUS_SESSION_BUS_ADDRESS $(CLIENT_BIN_DIR)/test-client lib-test
+	@$(CMAKE) --build "$(CMAKE_BUILD_DIR)" --parallel --target \
+		c_header_smoke cxx_header_smoke v1_client_metadata
+	@$(CTEST) --test-dir "$(CMAKE_BUILD_DIR)" --output-on-failure \
+		-R '^(c_header_smoke|cxx_header_smoke|v1_c_abi_contract|v1_client_metadata)$$'
 
 test-events: server-client-lib
-	@echo "运行事件监听功能测试..."
-	LD_LIBRARY_PATH=$(CLIENT_LIB_DIR):$$LD_LIBRARY_PATH DBUS_SESSION_BUS_ADDRESS=$$DBUS_SESSION_BUS_ADDRESS $(CLIENT_BIN_DIR)/test-client test-events
+	@LD_LIBRARY_PATH=./client/lib:$$LD_LIBRARY_PATH \
+		DBUS_SESSION_BUS_ADDRESS=$$DBUS_SESSION_BUS_ADDRESS \
+		./client/bin/test-client test-events
 
 test-all: server-client-lib
-	@echo "运行完整接口验证测试..."
-	LD_LIBRARY_PATH=$(CLIENT_LIB_DIR):$$LD_LIBRARY_PATH DBUS_SESSION_BUS_ADDRESS=$$DBUS_SESSION_BUS_ADDRESS $(CLIENT_BIN_DIR)/test-client all
+	@LD_LIBRARY_PATH=./client/lib:$$LD_LIBRARY_PATH \
+		DBUS_SESSION_BUS_ADDRESS=$$DBUS_SESSION_BUS_ADDRESS \
+		./client/bin/test-client all
 
 test-ping: server-client-lib
-	@echo "运行Ping功能测试..."
-	LD_LIBRARY_PATH=$(CLIENT_LIB_DIR):$$LD_LIBRARY_PATH DBUS_SESSION_BUS_ADDRESS=$$DBUS_SESSION_BUS_ADDRESS $(CLIENT_BIN_DIR)/test-client test-ping
+	@LD_LIBRARY_PATH=./client/lib:$$LD_LIBRARY_PATH \
+		DBUS_SESSION_BUS_ADDRESS=$$DBUS_SESSION_BUS_ADDRESS \
+		./client/bin/test-client test-ping
 
 test-performance: server-client-lib
-	@echo "运行性能测试..."
-	LD_LIBRARY_PATH=$(CLIENT_LIB_DIR):$$LD_LIBRARY_PATH DBUS_SESSION_BUS_ADDRESS=$$DBUS_SESSION_BUS_ADDRESS $(CLIENT_BIN_DIR)/test-client test-performance
+	@LD_LIBRARY_PATH=./client/lib:$$LD_LIBRARY_PATH \
+		DBUS_SESSION_BUS_ADDRESS=$$DBUS_SESSION_BUS_ADDRESS \
+		./client/bin/test-client test-performance
 
 run-client: server-client-lib
-	@echo "运行客户端订阅模式..."
-	LD_LIBRARY_PATH=$(CLIENT_LIB_DIR):$$LD_LIBRARY_PATH DBUS_SESSION_BUS_ADDRESS=$$DBUS_SESSION_BUS_ADDRESS $(CLIENT_BIN_DIR)/test-client subscribe
-
-
+	@LD_LIBRARY_PATH=./client/lib:$$LD_LIBRARY_PATH \
+		DBUS_SESSION_BUS_ADDRESS=$$DBUS_SESSION_BUS_ADDRESS \
+		./client/bin/test-client subscribe

@@ -1,5 +1,4 @@
-#define __TARGET_ARCH_x86
-#include "../vmlinux.h"
+#include "vmlinux.h"
 #include <bpf/bpf_helpers.h>
 #include <bpf/bpf_core_read.h>
 #include <bpf/bpf_tracing.h>
@@ -119,5 +118,4 @@ int udp_send_entry(struct pt_regs *ctx)
     account_flow(&k, (__u64)len);
     return 0;
 }
-
 

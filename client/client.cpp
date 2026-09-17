@@ -872,7 +872,7 @@ extern "C" bool weaknet_get_version(char* buffer, size_t buffer_size) {
 
 // 获取库的编译时间和编译选项信息
 extern "C" bool weaknet_get_build_info(char* buffer, size_t buffer_size) {
-    snprintf(buffer, buffer_size, "Built: %s %s | DBus-enabled | C++17", __DATE__, __TIME__);
+    snprintf(buffer, buffer_size, "Built: %s %s | DBus-enabled | C++20", __DATE__, __TIME__);
     return true;
 }
 

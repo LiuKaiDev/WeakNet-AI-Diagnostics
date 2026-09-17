@@ -3,10 +3,44 @@
 
 #include "traffic_analyzer.hpp"
 #include "logger.hpp"
+#include "weaknet/build_config.hpp"
 #include <chrono>
+#include <cstdlib>
+#include <filesystem>
 #include <thread>
 
 namespace weaknet_dbus {
+
+namespace {
+
+std::string resolveBpfObjectPath() {
+    if (const char* overridePath = std::getenv("WEAKNET_BPF_OBJECT");
+        overridePath && overridePath[0] != '\0') {
+        return overridePath;
+    }
+
+    std::error_code error;
+    const auto executable = std::filesystem::read_symlink("/proc/self/exe", error);
+    if (!error) {
+        const auto prefix = executable.parent_path().parent_path();
+        const auto candidate = prefix / WEAKNET_BPF_RELATIVE_PATH;
+        if (std::filesystem::is_regular_file(candidate, error) && !error) {
+            return candidate.string();
+        }
+
+        // The temporary Make wrapper stages the daemon and BPF object under server/.
+        error.clear();
+        const auto legacyStaged = prefix / "build/flow_rate.bpf.o";
+        if (std::filesystem::is_regular_file(legacyStaged, error) && !error) {
+            return legacyStaged.string();
+        }
+    }
+
+    // Preserve the original V1 repository-root launch convention.
+    return "server/build/flow_rate.bpf.o";
+}
+
+}  // namespace
 
 TrafficAnalyzer::TrafficAnalyzer() 
     : running_(false), interval_seconds_(10) {
@@ -26,8 +60,8 @@ void TrafficAnalyzer::start(const std::string& interface, int interval_seconds) 
     interface_ = interface;
     interval_seconds_ = interval_seconds;
     
-    // 设置eBPF对象路径。服务端从项目根目录启动时使用该相对路径。
-    analyzer_->setBpfObjectPath("server/build/flow_rate.bpf.o");
+    // Prefer the build/install layout while retaining the V1 source-tree fallback.
+    analyzer_->setBpfObjectPath(resolveBpfObjectPath());
     
     // 设置异常检测参数
     analyzer_->setAnomalyDetectionParams(

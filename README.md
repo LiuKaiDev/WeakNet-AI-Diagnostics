@@ -6,6 +6,8 @@ WeakNet AI Diagnostics 是一个面向 Linux 环境的网络诊断与弱网监�
 
 当前仓库标识为 `WeakNet-AI-Diagnostics`，整理为首次公开发布版本。项目重点保留已经完成部署验证的服务端、客户端、DBus 通信、网卡检测、健康检查和 Ping 功能。
 
+当前已完成 V2 Phase 1 构建基线：现有 V1 运行时使用 CMake 和 C++20 构建，并具有可选 eBPF 构建、确定性 CTest、C ABI 与 D-Bus 静态契约测试。运行时架构和 D-Bus 接口仍保持 V1，不代表后续 V2 组件已经实现。完整构建说明见 [`docs/BUILDING.md`](docs/BUILDING.md)。
+
 ## 功能特性
 
 - Linux 网络接口检测
@@ -115,6 +117,8 @@ sequenceDiagram
 
 ```text
 .
+├── CMakeLists.txt
+├── cmake/                    # Phase 1 build helpers
 ├── Makefile
 ├── config.mk
 ├── install.sh
@@ -131,6 +135,7 @@ sequenceDiagram
 │   ├── ping_example.cpp
 │   └── weaknet_client.h
 ├── docs/
+│   ├── BUILDING.md
 │   ├── events.md
 │   ├── path-portability.md
 │   ├── ping-feature.md
@@ -148,13 +153,14 @@ sequenceDiagram
     ├── build/                  # generated after build
     ├── include/
     ├── src/
-    └── vmlinux.h               # generated from kernel BTF
+    └── vmlinux.h               # legacy path; CMake does not generate here
 ```
 
 ## 运行环境
 
 已验证环境：
 
+- Phase 1 构建验证：Ubuntu 24.04.5 / WSL2 / x86_64、GCC 13.3、Clang 18.1、CMake 3.28、libbpf 1.3
 - Alibaba Cloud Linux 3.2104 U11
 - Kernel: `5.10.134-18.al8.x86_64`
 - Network interface: `eth0`
@@ -171,35 +177,38 @@ Alibaba Cloud Linux / RHEL 系环境可使用 `dnf` 安装依赖：
 
 ```bash
 dnf groupinstall -y "Development Tools"
-dnf install -y gcc gcc-c++ make cmake clang llvm pkgconf pkgconf-pkg-config pkgconfig dbus dbus-devel dbus-x11 glog glog-devel elfutils-libelf elfutils-libelf-devel zlib zlib-devel libcap libcap-devel kernel-headers kernel-devel libbpf libbpf-devel bpftool
+dnf install -y gcc gcc-c++ make cmake ninja-build clang llvm pkgconf pkgconf-pkg-config pkgconfig dbus dbus-devel dbus-x11 glog glog-devel elfutils-libelf elfutils-libelf-devel zlib zlib-devel libcap libcap-devel kernel-headers kernel-devel libbpf libbpf-devel bpftool
 ```
 
 ## 编译步骤
 
-1. 生成 `server/vmlinux.h`：
+推荐使用 CMake/Ninja。默认启用现有 V1 eBPF 对象并从内核 BTF 在构建目录生成 `vmlinux.h`：
 
 ```bash
-bpftool btf dump file /sys/kernel/btf/vmlinux format c > server/vmlinux.h
+cmake -S . -B build/default -G Ninja \
+  -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+  -DENABLE_EBPF=ON \
+  -DBUILD_TESTING=ON
+cmake --build build/default --parallel
+ctest --test-dir build/default --output-on-failure
 ```
 
-2. 清理旧构建产物：
+主要产物包括：
+
+- `build/default/bin/weaknet-dbus-server`
+- `build/default/libexec/weaknet/flow_rate.bpf.o`
+- `build/default/generated/bpf/vmlinux.h`
+- `build/default/lib/libweaknet.so`
+- `build/default/bin/test-client`
+
+不具备 eBPF 构建依赖时可以明确关闭，构建将使用已有的非 eBPF stub 路径：
 
 ```bash
-make clean
+cmake -S . -B build/no-ebpf -G Ninja -DENABLE_EBPF=OFF
+cmake --build build/no-ebpf --parallel
 ```
 
-3. 编译服务端、客户端动态库和测试工具：
-
-```bash
-make all
-```
-
-编译完成后主要产物包括：
-
-- `server/bin/weaknet-dbus-server`
-- `server/build/flow_rate.bpf.o`
-- `client/lib/libweaknet.so`
-- `client/bin/test-client`
+临时兼容入口 `make all` 仍然可用，并将产物暂存到原有 `server/bin`、`server/build`、`client/lib` 和 `client/bin` 路径。
 
 ## 部署验证
 

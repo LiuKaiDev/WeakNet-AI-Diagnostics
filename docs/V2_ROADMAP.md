@@ -2,7 +2,7 @@
 
 ## Roadmap rules
 
-This roadmap migrates V1 incrementally. The current task completes documentation/audit only; it does not authorize Phase 1 implementation.
+This roadmap migrates V1 incrementally. A milestone's recorded completion does not authorize work on any later milestone; phase authorization remains task-specific.
 
 Every phase must satisfy these standing gates:
 
@@ -40,6 +40,8 @@ Validation:
 - record why a native build could or could not run.
 
 ## Phase 1: Reproducible baseline and CMake/C++20 foundation
+
+Status: implemented in the current working tree; validated on the documented Ubuntu 24.04 x86_64 WSL2 environment with GCC and Clang. This status covers build/test foundations only and does not authorize or imply Phase 2 work.
 
 Objective: make the existing product build and fail predictably before changing its architecture.
 

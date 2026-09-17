@@ -1,4 +1,5 @@
 #include "net_traffic.h"
+#include "weaknet/build_config.hpp"
 
 #include <arpa/inet.h>
 #include <chrono>
@@ -14,19 +15,12 @@
 #include <cmath>
 #include <numeric>
 
-#if defined(__has_include)
-#  if __has_include(<linux/bpf.h>) && __has_include(<bpf/libbpf.h>) && __has_include(<bpf/bpf.h>)
-#    define HAVE_LIBBPF 1
+#if WEAKNET_ENABLE_EBPF
 extern "C" {
 #include <linux/bpf.h>
 #include <bpf/libbpf.h>
 #include <bpf/bpf.h>
 }
-#  else
-#    define HAVE_LIBBPF 0
-#  endif
-#else
-#  define HAVE_LIBBPF 0
 #endif
 
 std::once_flag NetTrafficAnalyzer::s_onceFlag;
@@ -42,7 +36,7 @@ void NetTrafficAnalyzer::setBpfObjectPath(const std::string& path) { bpfObjPath_
 static std::string ip_str(uint32_t ip) { struct in_addr a{ip}; return std::string(inet_ntoa(a)); }
 
 bool NetTrafficAnalyzer::initForInterface(const std::string& ifaceName) {
-#if !HAVE_LIBBPF
+#if !WEAKNET_ENABLE_EBPF
     (void)ifaceName;
     return false;
 #else
@@ -102,7 +96,7 @@ bool NetTrafficAnalyzer::initForInterface(const std::string& ifaceName) {
 std::vector<FlowRate> NetTrafficAnalyzer::sampleTopFlows(int intervalSec, int topN) {
     std::vector<FlowRate> out;
     if (!attached_) return out;
-#if !HAVE_LIBBPF
+#if !WEAKNET_ENABLE_EBPF
     return out;
 #else
     // t0 快照
@@ -298,4 +292,3 @@ void NetTrafficAnalyzer::clearHistory() {
     std::lock_guard<std::mutex> lock(historyMutex_);
     trafficHistory_.clear();
 }
-

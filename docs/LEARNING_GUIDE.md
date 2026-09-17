@@ -6,6 +6,18 @@ This is the intended code-reading order for a developer learning the system afte
 
 The central learning idea is to follow one observation from the kernel to an explanation, then follow one query from `weaknetctl` back to stored state. Read the optional AI code last; it is not part of core correctness.
 
+## Current implementation checkpoint
+
+Phase 1 is now the implemented baseline. The top-level `CMakeLists.txt`, `cmake/`, and `tests/` describe the current V1 products built as C++20:
+
+- `weaknet-dbus-server` (name intentionally unchanged);
+- `libweaknet.so`;
+- `test-client` and supported examples;
+- the optional existing `flow_rate.bpf.o`;
+- deterministic CTest and V1 ABI/D-Bus contract fixtures.
+
+The later names `weaknetd` and `weaknetctl`, plus EventBus, MetricStore, SocketTracker migration, IncidentEngine, and RootCauseEngine, remain target architecture and are not present yet. While learning the current checkout, read the Phase 1 targets first and use later sections as the intended post-implementation order.
+
 ## Prerequisites
 
 Before reading implementation details, be comfortable with:
@@ -43,6 +55,10 @@ Questions to answer before opening source:
 
 Read the top-level `CMakeLists.txt`, relevant files under `cmake/`, and target definitions for:
 
+- the current `weaknet_server_core`, `weaknet-dbus-server`, `weaknet_client`, and example targets;
+- `weaknet_bpf`, `ENABLE_EBPF`, `BUILD_TESTING`, and build-tree generated files;
+- `tests/contracts/` and the Phase 1 deterministic tests;
+
 - `weaknet_core` (or the equivalent domain library);
 - collector libraries;
 - the BPF object and generated skeleton;
@@ -50,6 +66,8 @@ Read the top-level `CMakeLists.txt`, relevant files under `cmake/`, and target d
 - `weaknetctl`;
 - unit, integration, lab, and benchmark targets;
 - the optional AI package boundary.
+
+The first three bullets are implemented now. The following target-architecture bullets become applicable as their roadmap phases land.
 
 Record which dependencies are required, optional, privileged only at runtime, or test-only. Notice how the eBPF-disabled build is represented and verify that no Python dependency reaches a production C++ target.
 
