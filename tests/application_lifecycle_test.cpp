@@ -57,9 +57,11 @@ int main() {
         hooks.fail_optional_component = "rssi";
         weaknet_dbus::DaemonApplication application(makeConfig(root, "degraded"), hooks);
         ok &= expect(application.start(), "optional collector failure killed startup");
+        ok &= expect(application.eventBus().running(), "Phase 3 EventBus did not start with application");
         ok &= expect(application.health().degraded(), "optional collector failure was not degraded");
         const auto started = std::chrono::steady_clock::now();
         application.stop();
+        ok &= expect(!application.eventBus().running(), "Phase 3 EventBus survived application stop");
         const auto elapsed = std::chrono::steady_clock::now() - started;
         ok &= expect(elapsed < 5s, "degraded application stop exceeded five seconds");
         application.stop();

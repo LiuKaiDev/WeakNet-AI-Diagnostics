@@ -23,6 +23,7 @@
 #include "using_iface.h"
 #include "weak_netmgr.hpp"
 #include "weaknet/build_config.hpp"
+#include "v1_observation_adapter.hpp"
 
 namespace weaknet_dbus {
 namespace {
@@ -118,19 +119,37 @@ bool DaemonApplication::startWorkers() {
     auto launch = [this](const char* name, auto entry) {
         if (test_hooks_.fail_optional_component == name) {
             health_.set(name, RuntimeHealthState::Degraded, "injected_failure");
+            if (v2_adapter_) {
+                v2_adapter_->mirrorCollectorHealth(
+                    name, v2::CollectorState::Degraded, "injected_failure");
+            }
             return;
         }
         health_.set(name, RuntimeHealthState::Starting);
         workers_.emplace_back([this, name, entry = std::move(entry)](std::stop_token) mutable {
             try {
                 health_.set(name, RuntimeHealthState::Running);
+                if (v2_adapter_) {
+                    v2_adapter_->mirrorCollectorHealth(name, v2::CollectorState::Running);
+                }
                 entry(stop_source_.get_token());
                 health_.set(name, RuntimeHealthState::Stopped);
+                if (v2_adapter_) {
+                    v2_adapter_->mirrorCollectorHealth(name, v2::CollectorState::Stopped);
+                }
             } catch (const std::exception& error) {
                 health_.set(name, RuntimeHealthState::Degraded, error.what());
+                if (v2_adapter_) {
+                    v2_adapter_->mirrorCollectorHealth(
+                        name, v2::CollectorState::Degraded, error.what());
+                }
                 LOG_ERROR(LogModule::SERVER, name << " worker stopped: " << error.what());
             } catch (...) {
                 health_.set(name, RuntimeHealthState::Degraded, "unknown_exception");
+                if (v2_adapter_) {
+                    v2_adapter_->mirrorCollectorHealth(
+                        name, v2::CollectorState::Degraded, "unknown_exception");
+                }
                 LOG_ERROR(LogModule::SERVER, name << " worker stopped with unknown exception");
             }
         });
@@ -183,6 +202,24 @@ bool DaemonApplication::start() {
         return false;
     }
 
+    if (!event_bus_.start()) {
+        health_.set("v2_event_bus", RuntimeHealthState::Failed, "start_failed");
+        stop();
+        return false;
+    }
+    health_.set("v2_event_bus", RuntimeHealthState::Running);
+    std::string netns_error;
+    const auto netns = v2::currentNetworkNamespace(&netns_error);
+    if (!netns) {
+        health_.set("v2_data_plane", RuntimeHealthState::Failed, netns_error);
+        stop();
+        return false;
+    }
+    v2_adapter_ = std::make_unique<v2::V1ObservationAdapter>(
+        event_bus_, metric_store_, clock_, *netns);
+    context_.v2_adapter = v2_adapter_.get();
+    health_.set("v2_data_plane", RuntimeHealthState::Running);
+
     if (test_hooks_.fail_required_step == "manager") {
         stop();
         return false;
@@ -211,6 +248,16 @@ bool DaemonApplication::start() {
         }
         const auto interfaces = weak_mgr_->collectCurrentInterfaces();
         weak_mgr_->updateInterfaces(interfaces);
+        v2_adapter_->mirrorInterfaceSnapshot(interfaces);
+        std::string current_interface;
+        for (const auto& interface : interfaces) {
+            if (interface.usingNow()) {
+                current_interface = interface.ifName();
+                break;
+            }
+        }
+        v2_adapter_->mirrorUplink(
+            current_interface, UsingInterfaceManager::getInstance()->getMethodFlags());
         if (test_hooks_.seed_test_interface) {
             NetInfo test_interface("test0");
             test_interface.setUsingNow(true);
@@ -234,11 +281,19 @@ bool DaemonApplication::start() {
             analyzer && analyzer->hasEbpf() ? RuntimeHealthState::Running
                                            : RuntimeHealthState::Degraded,
             analyzer && analyzer->hasEbpf() ? "" : "load_or_attach_failed");
+        v2_adapter_->mirrorCollectorHealth(
+            "ebpf", analyzer && analyzer->hasEbpf() ? v2::CollectorState::Running
+                                                     : v2::CollectorState::Degraded,
+            analyzer && analyzer->hasEbpf() ? "" : "load_or_attach_failed");
 #else
         health_.set("ebpf", RuntimeHealthState::Disabled, "not_built");
+        v2_adapter_->mirrorCollectorHealth("ebpf", v2::CollectorState::Disabled,
+                                           "not_built");
 #endif
     } catch (const std::exception& traffic_error) {
         health_.set("ebpf", RuntimeHealthState::Degraded, traffic_error.what());
+        v2_adapter_->mirrorCollectorHealth(
+            "ebpf", v2::CollectorState::Degraded, traffic_error.what());
     }
 
     if (!startWorkers()) {
@@ -321,9 +376,13 @@ void DaemonApplication::stop() noexcept {
         getEventManager().stopEventMonitoring();
         event_monitoring_started_ = false;
     }
+    event_bus_.stop();
+    health_.set("v2_event_bus", RuntimeHealthState::Stopped);
     stopDbus();
     weak_mgr_.reset();
     context_.weak_mgr = nullptr;
+    context_.v2_adapter = nullptr;
+    v2_adapter_.reset();
     restoreSignalMask();
     health_.set("logger", RuntimeHealthState::Stopped);
     Logger::shutdown();

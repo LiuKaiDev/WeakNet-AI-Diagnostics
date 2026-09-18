@@ -13,6 +13,9 @@
 #include "runtime_config.hpp"
 #include "runtime_health.hpp"
 #include "server.hpp"
+#include "event_bus.hpp"
+#include "metric_store.hpp"
+#include "v1_observation_adapter.hpp"
 
 namespace weaknet_dbus {
 
@@ -40,6 +43,8 @@ public:
 
     bool running() const noexcept { return started_.load() && !stop_source_.stop_requested(); }
     RuntimeHealth& health() noexcept { return health_; }
+    v2::EventBus& eventBus() noexcept { return event_bus_; }
+    v2::MetricStore& metricStore() noexcept { return metric_store_; }
 
 private:
     bool startSignalWaiter();
@@ -51,6 +56,10 @@ private:
 
     RuntimeConfig config_;
     RuntimeHealth health_;
+    v2::SystemClock clock_;
+    v2::EventBus event_bus_{1024};
+    v2::MetricStore metric_store_{clock_};
+    std::unique_ptr<v2::V1ObservationAdapter> v2_adapter_;
     std::stop_source stop_source_;
     std::atomic<bool> started_{false};
     std::atomic<bool> stopped_{false};

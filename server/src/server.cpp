@@ -15,6 +15,8 @@
 #include "network_quality_assessor.hpp"
 #include "stop_utils.hpp"
 #include "weak_netmgr.hpp"
+#include "v1_observation_adapter.hpp"
+#include "using_iface.h"
 
 using namespace std::chrono_literals;
 
@@ -54,6 +56,7 @@ void run_iface_monitor(ServerContext* ctx, std::stop_token token) {
         if (diffInterfaces(old_names, new_names, added, removed)) {
             current = latest;
             ctx->weak_mgr->updateInterfaces(current);
+            if (ctx->v2_adapter) ctx->v2_adapter->mirrorInterfaceSnapshot(current);
             std::string message = "Interfaces changed (using flags in log): +";
             for (std::size_t index = 0; index < added.size(); ++index) {
                 message += (index == 0 ? "" : ",") + added[index];
@@ -92,6 +95,17 @@ void run_using_iface_monitor(ServerContext* ctx, std::stop_token token) {
             getEventManager().emitConnectionModeChanged(
                 message, current_interface.empty() ? "none" : current_interface);
         }
+        if (changed && ctx->v2_adapter) {
+            std::string current_interface;
+            for (const auto& interface : interfaces) {
+                if (interface.usingNow()) {
+                    current_interface = interface.ifName();
+                    break;
+                }
+            }
+            ctx->v2_adapter->mirrorUplink(
+                current_interface, UsingInterfaceManager::getInstance()->getMethodFlags());
+        }
         if (waitForStop(token, 10s)) break;
     }
     LOG_INFO(LogModule::WEAK_MGR, "using interface monitor stopped");
@@ -101,6 +115,20 @@ void run_traffic_analysis_monitor(ServerContext* ctx, std::stop_token token) {
     LOG_INFO(LogModule::WEAK_MGR, "traffic analysis monitor started");
     while (!token.stop_requested()) {
         const bool changed = ctx->weak_mgr->updateTrafficAnalysisSafe(token);
+        if (changed && ctx->v2_adapter) {
+            const auto analyzer = ctx->weak_mgr->getTrafficAnalyzer();
+            std::string current_interface;
+            for (const auto& interface : ctx->weak_mgr->getCurrentInterfaces()) {
+                if (interface.usingNow()) {
+                    current_interface = interface.ifName();
+                    break;
+                }
+            }
+            if (!current_interface.empty() && analyzer) {
+                ctx->v2_adapter->mirrorTraffic(current_interface,
+                    analyzer->getCurrentStats(), analyzer->hasEbpf());
+            }
+        }
         if (changed && ctx->service) {
             ctx->service->emitChanged("Traffic analysis updated", 0);
         }

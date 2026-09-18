@@ -8,6 +8,7 @@
 #include "server.hpp"
 #include "stop_utils.hpp"
 #include "weak_netmgr.hpp"
+#include "v1_observation_adapter.hpp"
 
 using namespace std::chrono_literals;
 
@@ -28,17 +29,32 @@ void run_tcp_loss_monitor(ServerContext* ctx, std::stop_token token) {
             }
         }
         if (current_interface.empty()) {
+            if (ctx->v2_adapter) {
+                TcpLossResult unavailable;
+                unavailable.level = "insufficient";
+                ctx->v2_adapter->mirrorTcpLoss("", unavailable);
+            }
             if (waitForStop(token, 5s)) break;
             continue;
         }
 
         TcpStats current;
         if (!monitor->sampleForInterface(current_interface, current)) {
+            if (ctx->v2_adapter) {
+                TcpLossResult unavailable;
+                unavailable.level = "insufficient";
+                ctx->v2_adapter->mirrorTcpLoss(current_interface, unavailable);
+            }
             if (waitForStop(token, 10s)) break;
             continue;
         }
         if (has_previous) {
             const auto result = monitor->compute(previous, current);
+            const bool counters_reset = current.outSegs < previous.outSegs ||
+                                        current.retransSegs < previous.retransSegs;
+            if (ctx->v2_adapter) {
+                ctx->v2_adapter->mirrorTcpLoss(current_interface, result, counters_reset);
+            }
             if (result.sentDelta >= 10 &&
                 ctx->weak_mgr->updateTcpLossRateSafe(
                     current_interface, result.ratePercent, result.level) &&

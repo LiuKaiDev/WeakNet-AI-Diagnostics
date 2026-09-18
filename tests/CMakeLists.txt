@@ -15,6 +15,22 @@ target_link_libraries(network_quality_baseline PRIVATE weaknet_quality PkgConfig
 weaknet_add_cpp_test(runtime_foundation runtime_foundation_test.cpp)
 target_link_libraries(runtime_foundation PRIVATE weaknet_runtime weaknet_server_core)
 
+weaknet_add_cpp_test(network_event_schema network_event_test.cpp)
+target_link_libraries(network_event_schema PRIVATE weaknet_data_plane)
+set_tests_properties(network_event_schema PROPERTIES LABELS "phase3")
+
+weaknet_add_cpp_test(event_bus_concurrency event_bus_test.cpp)
+target_link_libraries(event_bus_concurrency PRIVATE weaknet_data_plane Threads::Threads)
+set_tests_properties(event_bus_concurrency PROPERTIES LABELS "phase3;concurrency")
+
+weaknet_add_cpp_test(metric_store_semantics metric_store_test.cpp)
+target_link_libraries(metric_store_semantics PRIVATE weaknet_data_plane Threads::Threads)
+set_tests_properties(metric_store_semantics PROPERTIES LABELS "phase3;concurrency")
+
+weaknet_add_cpp_test(v1_observation_adapter v1_observation_adapter_test.cpp)
+target_link_libraries(v1_observation_adapter PRIVATE weaknet_data_plane)
+set_tests_properties(v1_observation_adapter PROPERTIES LABELS "phase3;compatibility")
+
 weaknet_add_cpp_test(ping_executor_lifecycle ping_executor_test.cpp)
 target_link_libraries(ping_executor_lifecycle PRIVATE weaknet_server_core)
 

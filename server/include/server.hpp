@@ -11,6 +11,7 @@ class DbusService;
 struct RuntimeConfig;
 class RuntimeHealth;
 class WeakNetMgr;
+namespace v2 { class V1ObservationAdapter; }
 
 // Non-owning view passed to the retained V1 workers. DaemonApplication owns
 // every referenced object and joins all workers before destroying them.
@@ -21,6 +22,7 @@ struct ServerContext {
     WeakNetMgr* weak_mgr = nullptr;
     RuntimeConfig* config = nullptr;
     RuntimeHealth* health = nullptr;
+    v2::V1ObservationAdapter* v2_adapter = nullptr;
 };
 
 void run_iface_monitor(ServerContext* ctx, std::stop_token token);

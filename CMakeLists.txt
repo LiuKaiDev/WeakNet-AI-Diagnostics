@@ -92,6 +92,23 @@ set_target_properties(weaknet_runtime PROPERTIES POSITION_INDEPENDENT_CODE ON)
 add_library(weaknet_quality STATIC
     server/src/network_quality_assessor.cpp
 )
+
+add_library(weaknet_data_plane STATIC
+    server/src/clock.cpp
+    server/src/network_event.cpp
+    server/src/event_bus.cpp
+    server/src/metric_store.cpp
+    server/src/v1_observation_adapter.cpp
+)
+target_link_libraries(weaknet_data_plane
+    PUBLIC
+        weaknet_build_options
+        Threads::Threads
+)
+target_include_directories(weaknet_data_plane
+    PUBLIC
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/server/include>
+)
 target_link_libraries(weaknet_quality
     PUBLIC weaknet_build_options
     PRIVATE PkgConfig::GLOG
@@ -132,6 +149,7 @@ target_link_libraries(weaknet_server_core
         weaknet_serialization
         weaknet_quality
         weaknet_runtime
+        weaknet_data_plane
     PRIVATE
         Threads::Threads
         PkgConfig::DBUS

@@ -8,7 +8,7 @@ The central learning idea is to follow one observation from the kernel to an exp
 
 ## Current implementation checkpoint
 
-Phase 1 and Phase 2 are now the implemented baseline. The top-level `CMakeLists.txt`, `cmake/`, and `tests/` describe the current V1 products built as C++20 with an owned runtime lifecycle:
+Phase 1 through Phase 3 are now the implemented baseline. The top-level `CMakeLists.txt`, `cmake/`, and `tests/` describe the current V1 products built as C++20 with an owned runtime lifecycle plus an additive V2 internal data plane:
 
 - `weaknet-dbus-server` (name intentionally unchanged);
 - `libweaknet.so`;
@@ -16,8 +16,11 @@ Phase 1 and Phase 2 are now the implemented baseline. The top-level `CMakeLists.
 - the optional existing `flow_rate.bpf.o`;
 - deterministic CTest and V1 ABI/D-Bus contract fixtures;
 - `DaemonApplication`, direct `RuntimeHealth`, owned `std::jthread` workers, signal-driven reverse shutdown, bounded asynchronous V1 Ping, and validated runtime/state paths.
+- `network_event.hpp`, `event_bus.hpp`, `metric_store.hpp`, injected clocks, and `v1_observation_adapter.hpp` in the `weaknet_data_plane` target;
+- deterministic Phase 3 schema, saturation/concurrency, store retention, and V1 bridge tests;
+- exact Phase 3 semantics in `docs/PHASE3_DATA_PLANE.md`.
 
-The later names `weaknetd` and `weaknetctl`, plus EventBus, MetricStore, SocketTracker migration, IncidentEngine, and RootCauseEngine, remain target architecture and are not present yet. Read `server/src/application.cpp` after the Phase 1 targets, then read `docs/PHASE2_RUNTIME.md`; use later sections as the intended post-implementation order.
+The later names `weaknetd` and `weaknetctl`, plus collector replacement, SocketTracker, IncidentEngine, and RootCauseEngine, remain target architecture and are not present yet. Read `server/src/application.cpp` after the Phase 1 targets, then read `docs/PHASE2_RUNTIME.md` and `docs/PHASE3_DATA_PLANE.md`; use later sections as the intended post-implementation order.
 
 ## Prerequisites
 

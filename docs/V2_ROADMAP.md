@@ -117,6 +117,8 @@ Tests:
 
 ## Phase 3: Unified `NetworkEvent`, `EventBus`, and `MetricStore`
 
+Status: implemented in the current working tree as an additive internal data plane. V1 remains authoritative for the existing D-Bus/C ABI surface. See `PHASE3_DATA_PLANE.md` for exact ordering, bounds, validity, mirroring, and validation semantics. This status does not authorize Phase 4 work.
+
 Objective: establish the V2 internal data plane alongside V1 state.
 
 Scope:

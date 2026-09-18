@@ -7,6 +7,7 @@
 #include "server.hpp"
 #include "stop_utils.hpp"
 #include "weak_netmgr.hpp"
+#include "v1_observation_adapter.hpp"
 
 namespace weaknet_dbus {
 
@@ -16,6 +17,11 @@ void run_rtt_monitor(ServerContext* ctx, std::stop_token token,
     while (!token.stop_requested()) {
         try {
             const bool changed = ctx->weak_mgr->updateRttAndStateSafe(host, timeoutMs);
+            if (ctx->v2_adapter) {
+                for (const auto& interface : ctx->weak_mgr->getCurrentInterfaces()) {
+                    ctx->v2_adapter->mirrorRtt(interface);
+                }
+            }
             if (changed && ctx->service) {
                 ctx->service->emitChanged("RTT/Quality updated", 0);
             }
