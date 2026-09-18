@@ -82,6 +82,8 @@ Out of scope:
 
 ## Phase 2: Runtime ownership, shutdown, and health
 
+Status: implemented in the current working tree. The V1 session-bus/API and collector semantics remain in place; the implementation adds owned lifecycle, bounded Ping dispatch, direct runtime health, resource cleanup, and non-CWD runtime paths only.
+
 Objective: make the V1 daemon lifecycle safe without changing collector semantics.
 
 Scope:

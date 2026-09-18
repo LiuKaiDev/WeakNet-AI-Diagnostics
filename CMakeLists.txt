@@ -6,6 +6,9 @@ include(GNUInstallDirs)
 include(CTest)
 
 option(ENABLE_EBPF "Build the existing V1 eBPF traffic observer" ON)
+set(WEAKNET_SANITIZER "none" CACHE STRING
+    "Project-code sanitizer: none, address-undefined, or thread")
+set_property(CACHE WEAKNET_SANITIZER PROPERTY STRINGS none address-undefined thread)
 
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
@@ -25,6 +28,20 @@ target_compile_options(weaknet_build_options INTERFACE
     $<$<COMPILE_LANG_AND_ID:CXX,GNU,Clang>:-Wall;-Wextra;-Wpedantic>
 )
 
+if(WEAKNET_SANITIZER STREQUAL "address-undefined")
+    target_compile_options(weaknet_build_options INTERFACE
+        $<$<COMPILE_LANG_AND_ID:CXX,GNU,Clang>:-fsanitize=address,undefined;-fno-omit-frame-pointer>)
+    target_link_options(weaknet_build_options INTERFACE
+        $<$<LINK_LANG_AND_ID:CXX,GNU,Clang>:-fsanitize=address,undefined>)
+elseif(WEAKNET_SANITIZER STREQUAL "thread")
+    target_compile_options(weaknet_build_options INTERFACE
+        $<$<COMPILE_LANG_AND_ID:CXX,GNU,Clang>:-fsanitize=thread;-fno-omit-frame-pointer>)
+    target_link_options(weaknet_build_options INTERFACE
+        $<$<LINK_LANG_AND_ID:CXX,GNU,Clang>:-fsanitize=thread>)
+elseif(NOT WEAKNET_SANITIZER STREQUAL "none")
+    message(FATAL_ERROR "Unknown WEAKNET_SANITIZER='${WEAKNET_SANITIZER}'")
+endif()
+
 set(WEAKNET_GENERATED_DIR "${CMAKE_BINARY_DIR}/generated")
 file(MAKE_DIRECTORY "${WEAKNET_GENERATED_DIR}/weaknet")
 
@@ -36,6 +53,8 @@ endif()
 
 set(WEAKNET_BPF_RELATIVE_PATH
     "${CMAKE_INSTALL_LIBEXECDIR}/weaknet/flow_rate.bpf.o")
+set(WEAKNET_PING_HELPER_RELATIVE_PATH
+    "${CMAKE_INSTALL_LIBEXECDIR}/weaknet/weaknet-ping-helper")
 configure_file(
     "${CMAKE_CURRENT_SOURCE_DIR}/cmake/weaknet_build_config.hpp.in"
     "${WEAKNET_GENERATED_DIR}/weaknet/build_config.hpp"
@@ -60,6 +79,16 @@ target_include_directories(weaknet_serialization
 )
 set_target_properties(weaknet_serialization PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
+add_library(weaknet_runtime STATIC
+    server/src/runtime_config.cpp
+)
+target_link_libraries(weaknet_runtime PUBLIC weaknet_build_options)
+target_include_directories(weaknet_runtime
+    PUBLIC
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/server/include>
+)
+set_target_properties(weaknet_runtime PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
 add_library(weaknet_quality STATIC
     server/src/network_quality_assessor.cpp
 )
@@ -73,6 +102,9 @@ target_include_directories(weaknet_quality
 )
 
 set(WEAKNET_SERVER_SOURCES
+    server/src/application.cpp
+    server/src/runtime_health.cpp
+    server/src/ping_executor.cpp
     server/src/server.cpp
     server/src/dbus_service.cpp
     server/src/looper.cpp
@@ -99,6 +131,7 @@ target_link_libraries(weaknet_server_core
         weaknet_build_options
         weaknet_serialization
         weaknet_quality
+        weaknet_runtime
     PRIVATE
         Threads::Threads
         PkgConfig::DBUS
@@ -129,12 +162,18 @@ if(ENABLE_EBPF)
     add_dependencies(weaknet-dbus-server weaknet_bpf)
 endif()
 
+add_executable(weaknet-ping-helper server/src/ping_helper_main.cpp)
+target_link_libraries(weaknet-ping-helper PRIVATE weaknet_server_core)
+set_target_properties(weaknet-ping-helper PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/${CMAKE_INSTALL_LIBEXECDIR}/weaknet")
+
 add_library(weaknet_client SHARED client/client.cpp)
 set_target_properties(weaknet_client PROPERTIES OUTPUT_NAME weaknet)
 target_link_libraries(weaknet_client
     PRIVATE
         weaknet_build_options
         weaknet_serialization
+        weaknet_runtime
         Threads::Threads
         PkgConfig::DBUS
         PkgConfig::GLOG
@@ -176,6 +215,8 @@ install(TARGETS
     RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}"
     LIBRARY DESTINATION "${CMAKE_INSTALL_LIBDIR}"
 )
+install(TARGETS weaknet-ping-helper
+    RUNTIME DESTINATION "${CMAKE_INSTALL_LIBEXECDIR}/weaknet")
 install(FILES client/weaknet_client.h DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}")
 if(ENABLE_EBPF)
     install(FILES "${WEAKNET_BPF_OBJECT}"
@@ -191,6 +232,14 @@ set(_legacy_server_commands
         "${CMAKE_CURRENT_SOURCE_DIR}/server/bin/weaknet-dbus-server"
 )
 set(_legacy_server_dependencies weaknet-dbus-server)
+list(APPEND _legacy_server_commands
+    COMMAND "${CMAKE_COMMAND}" -E make_directory
+        "${CMAKE_CURRENT_SOURCE_DIR}/server/libexec/weaknet"
+    COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+        "$<TARGET_FILE:weaknet-ping-helper>"
+        "${CMAKE_CURRENT_SOURCE_DIR}/server/libexec/weaknet/weaknet-ping-helper"
+)
+list(APPEND _legacy_server_dependencies weaknet-ping-helper)
 if(ENABLE_EBPF)
     list(APPEND _legacy_server_commands
         COMMAND "${CMAKE_COMMAND}" -E copy_if_different
@@ -236,6 +285,7 @@ message(STATUS "WeakNet Phase 1 configuration")
 message(STATUS "  C++ standard: C++20")
 message(STATUS "  ENABLE_EBPF: ${ENABLE_EBPF}")
 message(STATUS "  BUILD_TESTING: ${BUILD_TESTING}")
+message(STATUS "  WEAKNET_SANITIZER: ${WEAKNET_SANITIZER}")
 message(STATUS "  dbus-1: ${DBUS_VERSION}")
 message(STATUS "  glog: ${GLOG_VERSION}")
 if(ENABLE_EBPF)

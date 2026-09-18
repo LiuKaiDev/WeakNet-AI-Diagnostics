@@ -32,7 +32,7 @@ server-client: server-client-lib
 
 clean:
 	@$(CMAKE) -E rm -rf "$(CMAKE_BUILD_DIR)" \
-		server/bin server/build client/bin client/lib
+		server/bin server/build server/libexec client/bin client/lib
 
 run-server: server-client-lib
 	@DBUS_SESSION_BUS_ADDRESS=$$DBUS_SESSION_BUS_ADDRESS \

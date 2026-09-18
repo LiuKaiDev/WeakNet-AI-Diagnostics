@@ -37,7 +37,7 @@ class Logger {
 public:
     // 初始化日志系统
     static bool init(const std::string& program_name, 
-                    const std::string& log_dir = "./logs/server",
+                    const std::string& log_dir,
                     LogLevel min_level = LogLevel::INFO,
                     bool log_to_stderr = true);
     
@@ -102,5 +102,4 @@ private:
     LOG(ERROR) << "[" << module << "] " << operation << " failed with error code: " << error_code
 
 } // namespace weaknet_dbus
-
 

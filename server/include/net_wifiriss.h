@@ -3,6 +3,7 @@
 #include <string>
 #include <memory>
 #include <mutex>
+#include "scoped_fd.hpp"
 
 // 通过 UNIX DGRAM 与 wpa_supplicant 控制接口通信，查询 RSSI
 class WiFiRssiClient {
@@ -19,12 +20,15 @@ public:
 
     // 发送 SIGNAL_POLL 并解析 RSSI，成功返回 rssi(dBm)，失败返回极小值(-1000)
     int getRssi();
+    void disconnect() noexcept;
+    void setRuntimeDirectory(std::string directory);
 
 private:
-    int sockfd_ = -1;
+    weaknet_dbus::ScopedFd sockfd_;
     std::string iface_;
     std::string ctrlDir_;
     std::string localSockPath_;
+    std::string runtimeDir_ = "/tmp";
 
     static std::once_flag s_onceFlag;
     static std::shared_ptr<WiFiRssiClient> s_instance;

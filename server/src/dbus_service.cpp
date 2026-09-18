@@ -4,6 +4,7 @@
 #include <dbus/dbus.h>
 #include <cstdio>
 #include <cstring>
+#include <memory>
 #include "logger.hpp"
 
 #include "common.hpp"
@@ -14,10 +15,25 @@
 #include "net_info.hpp"
 #include "network_quality_assessor.hpp"
 #include "net_ping.h"
+#include "ping_executor.hpp"
+#include "runtime_config.hpp"
+#include "runtime_health.hpp"
 
 namespace weaknet_dbus {
 
-DbusService::DbusService(ServerContext* ctx) : ctx_(ctx) {}
+DbusService::DbusService(ServerContext* ctx, PingExecutor::Operation ping_operation,
+                         std::string ping_helper_path)
+    : ctx_(ctx),
+      ping_executor_(std::make_unique<PingExecutor>(
+          8, std::move(ping_operation), std::move(ping_helper_path))) {}
+
+DbusService::~DbusService() {
+    beginShutdown();
+}
+
+void DbusService::beginShutdown() noexcept {
+    if (ping_executor_) ping_executor_->stop();
+}
 
 // 静态自由函数，转调到对象实例
 static DBusHandlerResult MessageHandlerStatic(DBusConnection* conn, DBusMessage* msg, void* user_data) {
@@ -53,6 +69,7 @@ bool DbusService::register_on_connection(DBusConnection* conn) {
 }
 
 bool DbusService::emitChanged(const std::string& message, int32_t counter) {
+    std::lock_guard lock(output_mutex_);
     DBusMessage* sig = dbus_message_new_signal(kObjectPath, kInterface, kSignalChanged);
     if (!sig) return false;
     DBusMessageIter args;
@@ -61,17 +78,19 @@ bool DbusService::emitChanged(const std::string& message, int32_t counter) {
     if (!dbus_message_iter_append_basic(&args, DBUS_TYPE_STRING, &s)) { dbus_message_unref(sig); return false; }
     if (!dbus_message_iter_append_basic(&args, DBUS_TYPE_INT32, &counter)) { dbus_message_unref(sig); return false; }
     bool ok = dbus_connection_send(ctx_->connection, sig, nullptr);
-    dbus_connection_flush(ctx_->connection);
     dbus_message_unref(sig);
     ChangedPayload payload{message, counter};
     std::string err;
-    serializeChangedPayloadToFile(payload, kSignalSerializedFile, &err);
+    if (ctx_->config) {
+        serializeChangedPayloadToFile(payload, ctx_->config->signalFile().string(), &err);
+    }
     return ok;
 }
 
 // MessageHandler 实现已移动到静态自由函数
 
 bool DbusService::handleGet(DBusConnection* conn, DBusMessage* msg) {
+    std::lock_guard lock(output_mutex_);
     const char* reply_text = "Hello from WeakNet Server";
     DBusMessage* reply = dbus_message_new_method_return(msg);
     if (!reply) return false;
@@ -80,14 +99,16 @@ bool DbusService::handleGet(DBusConnection* conn, DBusMessage* msg) {
     const char* s = reply_text;
     if (!dbus_message_iter_append_basic(&args, DBUS_TYPE_STRING, &s)) { dbus_message_unref(reply); return false; }
     if (!dbus_connection_send(conn, reply, nullptr)) { dbus_message_unref(reply); return false; }
-    dbus_connection_flush(conn);
     dbus_message_unref(reply);
     std::string err;
-    serializeGetReplyToFile(reply_text, kGetReplySerializedFile, &err);
+    if (ctx_ && ctx_->config) {
+        serializeGetReplyToFile(reply_text, ctx_->config->getReplyFile().string(), &err);
+    }
     return true;
 }
 
 bool DbusService::replyStringArray(DBusConnection* conn, DBusMessage* msg, const std::vector<std::string>& arr) {
+    std::lock_guard lock(output_mutex_);
     DBusMessage* reply = dbus_message_new_method_return(msg);
     if (!reply) return false;
     DBusMessageIter iter;
@@ -100,7 +121,6 @@ bool DbusService::replyStringArray(DBusConnection* conn, DBusMessage* msg, const
     }
     if (!dbus_message_iter_close_container(&iter, &array_iter)) { dbus_message_unref(reply); return false; }
     bool ok = dbus_connection_send(conn, reply, nullptr);
-    dbus_connection_flush(conn);
     dbus_message_unref(reply);
     return ok;
 }
@@ -123,7 +143,12 @@ bool DbusService::handleHealthCheck(DBusConnection* conn, DBusMessage* msg) {
     NetworkQualityAssessor assessor;
     NetworkQualityResult result = assessor.assessQuality(snapshot);
     std::string reply_text = result.details;
+    if (ctx_ && ctx_->health && !reply_text.empty() && reply_text.back() == '}') {
+        reply_text.pop_back();
+        reply_text += ",\"runtime_health\":" + ctx_->health->toJson() + "}";
+    }
 
+    std::lock_guard lock(output_mutex_);
     DBusMessage* reply = dbus_message_new_method_return(msg);
     if (!reply) return false;
     DBusMessageIter args;
@@ -131,7 +156,6 @@ bool DbusService::handleHealthCheck(DBusConnection* conn, DBusMessage* msg) {
     const char* s = reply_text.c_str();
     if (!dbus_message_iter_append_basic(&args, DBUS_TYPE_STRING, &s)) { dbus_message_unref(reply); return false; }
     if (!dbus_connection_send(conn, reply, nullptr)) { dbus_message_unref(reply); return false; }
-    dbus_connection_flush(conn);
     dbus_message_unref(reply);
     return true;
 }
@@ -139,6 +163,7 @@ bool DbusService::handleHealthCheck(DBusConnection* conn, DBusMessage* msg) {
 bool DbusService::emitSpecificSignal(const std::string& signalName, const std::string& message, int32_t counter) {
     if (!ctx_ || !ctx_->connection) return false;
 
+    std::lock_guard lock(output_mutex_);
     DBusMessage* signal = dbus_message_new_signal(kObjectPath, kInterface, signalName.c_str());
     if (!signal) return false;
 
@@ -157,7 +182,6 @@ bool DbusService::emitSpecificSignal(const std::string& signalName, const std::s
     }
 
     bool ok = dbus_connection_send(ctx_->connection, signal, nullptr);
-    dbus_connection_flush(ctx_->connection);
     dbus_message_unref(signal);
     
     LOG_INFO(LogModule::DBUS, "emitted signal: " << signalName << ", message='" << message << "', counter=" << counter);
@@ -167,6 +191,7 @@ bool DbusService::emitSpecificSignal(const std::string& signalName, const std::s
 bool DbusService::emitNetworkQualitySignal(const std::string& message, const std::string& details, int32_t counter) {
     if (!ctx_ || !ctx_->connection) return false;
 
+    std::lock_guard lock(output_mutex_);
     DBusMessage* signal = dbus_message_new_signal(kObjectPath, kInterface, kSignalNetworkQualityChanged);
     if (!signal) return false;
 
@@ -194,7 +219,6 @@ bool DbusService::emitNetworkQualitySignal(const std::string& message, const std
     }
 
     bool ok = dbus_connection_send(ctx_->connection, signal, nullptr);
-    dbus_connection_flush(ctx_->connection);
     dbus_message_unref(signal);
     
     LOG_INFO(LogModule::DBUS, "emitted network quality signal: quality='" << message << "', details='" << details << "', counter=" << counter);
@@ -215,6 +239,7 @@ bool DbusService::handlePing(DBusConnection* conn, DBusMessage* msg) {
         
         // 发送错误回复
         DBusMessage* reply = dbus_message_new_error(msg, "com.example.WeakNet.Error", "Invalid arguments");
+        std::lock_guard lock(output_mutex_);
         dbus_connection_send(conn, reply, nullptr);
         dbus_message_unref(reply);
         return false;
@@ -225,6 +250,7 @@ bool DbusService::handlePing(DBusConnection* conn, DBusMessage* msg) {
         
         // 发送错误回复
         DBusMessage* reply = dbus_message_new_error(msg, "com.example.WeakNet.Error", "Empty hostname");
+        std::lock_guard lock(output_mutex_);
         dbus_connection_send(conn, reply, nullptr);
         dbus_message_unref(reply);
         return false;
@@ -252,6 +278,7 @@ bool DbusService::handlePing(DBusConnection* conn, DBusMessage* msg) {
         
         // 发送错误回复
         DBusMessage* reply = dbus_message_new_error(msg, "com.example.WeakNet.Error", "No active network interface");
+        std::lock_guard lock(output_mutex_);
         dbus_connection_send(conn, reply, nullptr);
         dbus_message_unref(reply);
         return false;
@@ -259,45 +286,46 @@ bool DbusService::handlePing(DBusConnection* conn, DBusMessage* msg) {
     
     LOG_INFO(LogModule::DBUS, "Using interface: " << currentIface << " for ping to " << hostname);
     
-    // 调用NetPing进行ping测试
-    auto pingInstance = NetPing::getInstance();
-    int pingResult = pingInstance->ping(hostname, currentIface, 3000); // 3秒超时
-    
-    // 构建回复消息
-    DBusMessage* reply = dbus_message_new_method_return(msg);
-    if (!reply) {
-        LOG_ERROR(LogModule::DBUS, "Failed to create ping reply message");
-        return false;
+    using MessagePtr = std::shared_ptr<DBusMessage>;
+    MessagePtr request(dbus_message_ref(msg), [](DBusMessage* message) {
+        dbus_message_unref(message);
+    });
+    const std::string host_copy(hostname);
+    const bool accepted = ping_executor_->submit(
+        host_copy, currentIface, 3000,
+        [this, conn, request, host_copy, currentIface](int pingResult) {
+            std::string result;
+            if (pingResult >= 0) {
+                result = "PING " + host_copy + " via " + currentIface + ": " +
+                         std::to_string(pingResult) + "ms";
+            } else {
+                result = "PING " + host_copy + " via " + currentIface +
+                         ": FAILED (error code: " + std::to_string(pingResult) + ")";
+            }
+            DBusMessage* reply = dbus_message_new_method_return(request.get());
+            if (!reply) return;
+            DBusMessageIter args;
+            dbus_message_iter_init_append(reply, &args);
+            const char* result_string = result.c_str();
+            if (!dbus_message_iter_append_basic(&args, DBUS_TYPE_STRING, &result_string)) {
+                dbus_message_unref(reply);
+                return;
+            }
+            std::lock_guard lock(output_mutex_);
+            dbus_connection_send(conn, reply, nullptr);
+            dbus_message_unref(reply);
+        });
+    if (accepted) return true;
+
+    DBusMessage* reply = dbus_message_new_error(
+        msg, "com.example.WeakNet.Error.Busy", "Ping request queue is full");
+    if (!reply) return false;
+    {
+        std::lock_guard lock(output_mutex_);
+        dbus_connection_send(conn, reply, nullptr);
     }
-    
-    DBusMessageIter args;
-    dbus_message_iter_init_append(reply, &args);
-    
-    // 构建结果字符串
-    std::string result;
-    if (pingResult >= 0) {
-        result = std::string("PING ") + hostname + " via " + currentIface + ": " + std::to_string(pingResult) + "ms";
-        LOG_INFO(LogModule::DBUS, "Ping successful: " << result);
-    } else {
-        result = std::string("PING ") + hostname + " via " + currentIface + ": FAILED (error code: " + std::to_string(pingResult) + ")";
-        LOG_INFO(LogModule::DBUS, "Ping failed: " << result);
-    }
-    
-    const char* resultStr = result.c_str();
-    if (!dbus_message_iter_append_basic(&args, DBUS_TYPE_STRING, &resultStr)) {
-        LOG_ERROR(LogModule::DBUS, "Failed to append ping result to reply");
-        dbus_message_unref(reply);
-        return false;
-    }
-    
-    // 发送回复
-    bool ok = dbus_connection_send(conn, reply, nullptr);
-    dbus_connection_flush(conn);
     dbus_message_unref(reply);
-    
-    std::printf("[dbus] Ping reply sent: %s\n", ok ? "success" : "failed");
-    return ok;
+    return false;
 }
 
 }  // namespace weaknet_dbus
-

@@ -14,6 +14,7 @@
 #include <errno.h>
 #include <cmath>
 #include <numeric>
+#include "stop_utils.hpp"
 
 #if WEAKNET_ENABLE_EBPF
 extern "C" {
@@ -26,9 +27,29 @@ extern "C" {
 std::once_flag NetTrafficAnalyzer::s_onceFlag;
 std::shared_ptr<NetTrafficAnalyzer> NetTrafficAnalyzer::s_instance;
 
+void BpfObjectDeleter::operator()(bpf_object* object) const noexcept {
+#if WEAKNET_ENABLE_EBPF
+    if (object) bpf_object__close(object);
+#else
+    (void)object;
+#endif
+}
+
+void BpfLinkDeleter::operator()(bpf_link* link) const noexcept {
+#if WEAKNET_ENABLE_EBPF
+    if (link) bpf_link__destroy(link);
+#else
+    (void)link;
+#endif
+}
+
 std::shared_ptr<NetTrafficAnalyzer> NetTrafficAnalyzer::getInstance() {
     std::call_once(s_onceFlag, [](){ s_instance = std::shared_ptr<NetTrafficAnalyzer>(new NetTrafficAnalyzer()); });
     return s_instance;
+}
+
+NetTrafficAnalyzer::~NetTrafficAnalyzer() {
+    shutdown();
 }
 
 void NetTrafficAnalyzer::setBpfObjectPath(const std::string& path) { bpfObjPath_ = path; }
@@ -44,59 +65,74 @@ bool NetTrafficAnalyzer::initForInterface(const std::string& ifaceName) {
     libbpf_set_print([](enum libbpf_print_level level, const char *fmt, va_list args) -> int {
         (void)level; return vfprintf(stderr, fmt, args);
     });
+    std::lock_guard resource_lock(resourceMutex_);
     if (attached_) return true;
-    bpf_object* obj = bpf_object__open(bpfObjPath_.c_str());
-    if (!obj || libbpf_get_error(obj)) {
-        long err = obj ? libbpf_get_error(obj) : -ENOENT;
+    bpf_object* raw_object = bpf_object__open(bpfObjPath_.c_str());
+    if (!raw_object || libbpf_get_error(raw_object)) {
+        long err = raw_object ? libbpf_get_error(raw_object) : -ENOENT;
         fprintf(stderr, "[ebpf] failed to open bpf object: %s, err=%ld\n", bpfObjPath_.c_str(), err);
         return false;
     }
-    if (bpf_object__load(obj)) { bpf_object__close(obj); return false; }
+    std::unique_ptr<bpf_object, BpfObjectDeleter> object(raw_object);
+    if (bpf_object__load(object.get())) return false;
 
     // map: current_sec 必须存在
-    mapCurrFd_ = bpf_object__find_map_fd_by_name(obj, "current_sec");
-    if (mapCurrFd_ < 0) { bpf_object__close(obj); return false; }
+    const int current_map_fd = bpf_object__find_map_fd_by_name(object.get(), "current_sec");
+    if (current_map_fd < 0) return false;
 
     // 可选：控制 map（按接口过滤，若内核态支持）
-    mapCfgFd_ = bpf_object__find_map_fd_by_name(obj, "cfg_iface");
-    if (mapCfgFd_ >= 0) {
+    const int config_map_fd = bpf_object__find_map_fd_by_name(object.get(), "cfg_iface");
+    if (config_map_fd >= 0) {
         // 写入待绑定接口索引
         unsigned ifi = if_nametoindex(ifaceName.c_str());
         if (ifi > 0) {
             int zero = 0; unsigned val = ifi;
-            bpf_map_update_elem(mapCfgFd_, &zero, &val, BPF_ANY);
+            bpf_map_update_elem(config_map_fd, &zero, &val, BPF_ANY);
         }
     }
 
     // attach 程序（允许 kprobe/fentry 自动识别）
-    bpf_program* prog_tcp = bpf_object__find_program_by_name(obj, "tcp_transmit_entry");
-    bpf_program* prog_udp = bpf_object__find_program_by_name(obj, "udp_send_entry");
-    if (!prog_tcp || !prog_udp) { bpf_object__close(obj); return false; }
-    bpf_link* l1 = bpf_program__attach(prog_tcp);
-    long err_tcp = libbpf_get_error(l1);
+    bpf_program* prog_tcp = bpf_object__find_program_by_name(object.get(), "tcp_transmit_entry");
+    bpf_program* prog_udp = bpf_object__find_program_by_name(object.get(), "udp_send_entry");
+    if (!prog_tcp || !prog_udp) return false;
+    bpf_link* raw_tcp_link = bpf_program__attach(prog_tcp);
+    long err_tcp = libbpf_get_error(raw_tcp_link);
+    std::unique_ptr<bpf_link, BpfLinkDeleter> tcp_link;
     if (err_tcp) {
         fprintf(stderr, "[ebpf] attach kprobe/ip_queue_xmit failed: %ld errno=%d\n", err_tcp, errno);
-        if (!l1) {/* noop */} else { bpf_link__destroy(l1); }
-        l1 = nullptr;
+    } else {
+        tcp_link.reset(raw_tcp_link);
     }
-    bpf_link* l2 = bpf_program__attach(prog_udp);
-    long err_udp = libbpf_get_error(l2);
+    bpf_link* raw_udp_link = bpf_program__attach(prog_udp);
+    long err_udp = libbpf_get_error(raw_udp_link);
+    std::unique_ptr<bpf_link, BpfLinkDeleter> udp_link;
     if (err_udp) {
         fprintf(stderr, "[ebpf] attach kprobe/udp_sendmsg failed: %ld errno=%d\n", err_udp, errno);
-        if (!l2) {/* noop */} else { bpf_link__destroy(l2); }
-        l2 = nullptr;
+    } else {
+        udp_link.reset(raw_udp_link);
     }
 
-    if (!l1 && !l2) { bpf_object__close(obj); return false; }
-    bpfObj_ = obj; linkTcp_ = l1; linkUdp_ = l2; attached_ = true; boundIface_ = ifaceName;
+    if (!tcp_link && !udp_link) return false;
+    bpfObj_ = std::move(object);
+    linkTcp_ = std::move(tcp_link);
+    linkUdp_ = std::move(udp_link);
+    mapCurrFd_ = current_map_fd;
+    mapCfgFd_ = config_map_fd;
+    attached_ = true;
+    boundIface_ = ifaceName;
     return true;
 #endif
 }
 
-std::vector<FlowRate> NetTrafficAnalyzer::sampleTopFlows(int intervalSec, int topN) {
+std::vector<FlowRate> NetTrafficAnalyzer::sampleTopFlows(
+    int intervalSec, int topN, std::stop_token token) {
+    std::lock_guard sampling_lock(samplingMutex_);
     std::vector<FlowRate> out;
     if (!attached_) return out;
 #if !WEAKNET_ENABLE_EBPF
+    (void)intervalSec;
+    (void)topN;
+    (void)token;
     return out;
 #else
     // t0 快照
@@ -115,7 +151,7 @@ std::vector<FlowRate> NetTrafficAnalyzer::sampleTopFlows(int intervalSec, int to
         ret = bpf_map_get_next_key(mapCurrFd_, &key, &next_key);
     }
 
-    std::this_thread::sleep_for(std::chrono::seconds(intervalSec));
+    if (weaknet_dbus::waitForStop(token, std::chrono::seconds(intervalSec))) return out;
 
     // t1 读取并计算 delta
     ret = bpf_map_get_next_key(mapCurrFd_, nullptr, &next_key);
@@ -187,13 +223,15 @@ double NetTrafficAnalyzer::calculateSeverity(uint64_t currentBps, uint64_t thres
 std::vector<TrafficAnomaly> NetTrafficAnalyzer::detectAnomalies(int intervalSec, 
                                                                uint64_t burstThresholdBps,
                                                                uint64_t suspiciousThresholdBps,
-                                                               double burstMultiplier) {
+                                                               double burstMultiplier,
+                                                               std::stop_token token) {
     std::vector<TrafficAnomaly> anomalies;
     
     if (!attached_) return anomalies;
     
     // 获取当前流量数据
-    auto flows = sampleTopFlows(intervalSec, 1000); // 获取更多流进行分析
+    auto flows = sampleTopFlows(intervalSec, 1000, token); // 获取更多流进行分析
+    if (token.stop_requested()) return anomalies;
     
     std::lock_guard<std::mutex> lock(historyMutex_);
     auto now = std::chrono::system_clock::now();
@@ -270,12 +308,12 @@ void NetTrafficAnalyzer::setAnomalyDetectionParams(uint64_t burstThreshold, uint
     burstMultiplier_ = burstMultiplier;
 }
 
-NetTrafficAnalyzer::RealTimeStats NetTrafficAnalyzer::getRealTimeStats() {
+NetTrafficAnalyzer::RealTimeStats NetTrafficAnalyzer::getRealTimeStats(std::stop_token token) {
     RealTimeStats stats;
     
     if (!attached_) return stats;
     
-    auto flows = sampleTopFlows(1, 1000); // 1秒采样
+    auto flows = sampleTopFlows(1, 1000, token); // 1秒采样
     
     stats.timestamp = std::chrono::system_clock::now();
     stats.activeFlows = flows.size();
@@ -291,4 +329,21 @@ NetTrafficAnalyzer::RealTimeStats NetTrafficAnalyzer::getRealTimeStats() {
 void NetTrafficAnalyzer::clearHistory() {
     std::lock_guard<std::mutex> lock(historyMutex_);
     trafficHistory_.clear();
+}
+
+void NetTrafficAnalyzer::shutdown() noexcept {
+    std::lock_guard sampling_lock(samplingMutex_);
+    std::lock_guard resource_lock(resourceMutex_);
+    linkUdp_.reset();
+    linkTcp_.reset();
+    bpfObj_.reset();
+    mapCurrFd_ = -1;
+    mapCfgFd_ = -1;
+    attached_ = false;
+    boundIface_.clear();
+}
+
+bool NetTrafficAnalyzer::attached() const {
+    std::lock_guard lock(resourceMutex_);
+    return attached_;
 }

@@ -8,15 +8,16 @@ The central learning idea is to follow one observation from the kernel to an exp
 
 ## Current implementation checkpoint
 
-Phase 1 is now the implemented baseline. The top-level `CMakeLists.txt`, `cmake/`, and `tests/` describe the current V1 products built as C++20:
+Phase 1 and Phase 2 are now the implemented baseline. The top-level `CMakeLists.txt`, `cmake/`, and `tests/` describe the current V1 products built as C++20 with an owned runtime lifecycle:
 
 - `weaknet-dbus-server` (name intentionally unchanged);
 - `libweaknet.so`;
 - `test-client` and supported examples;
 - the optional existing `flow_rate.bpf.o`;
-- deterministic CTest and V1 ABI/D-Bus contract fixtures.
+- deterministic CTest and V1 ABI/D-Bus contract fixtures;
+- `DaemonApplication`, direct `RuntimeHealth`, owned `std::jthread` workers, signal-driven reverse shutdown, bounded asynchronous V1 Ping, and validated runtime/state paths.
 
-The later names `weaknetd` and `weaknetctl`, plus EventBus, MetricStore, SocketTracker migration, IncidentEngine, and RootCauseEngine, remain target architecture and are not present yet. While learning the current checkout, read the Phase 1 targets first and use later sections as the intended post-implementation order.
+The later names `weaknetd` and `weaknetctl`, plus EventBus, MetricStore, SocketTracker migration, IncidentEngine, and RootCauseEngine, remain target architecture and are not present yet. Read `server/src/application.cpp` after the Phase 1 targets, then read `docs/PHASE2_RUNTIME.md`; use later sections as the intended post-implementation order.
 
 ## Prerequisites
 

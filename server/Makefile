@@ -23,7 +23,7 @@ configure:
 	@$(CMAKE_CONFIGURE)
 
 clean:
-	@$(CMAKE) -E rm -rf "$(CMAKE_BUILD_DIR)" bin build
+	@$(CMAKE) -E rm -rf "$(CMAKE_BUILD_DIR)" bin build libexec
 
 run: all
 	@DBUS_SESSION_BUS_ADDRESS=$$DBUS_SESSION_BUS_ADDRESS \

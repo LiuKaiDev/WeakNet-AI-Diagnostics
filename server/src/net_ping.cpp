@@ -15,6 +15,8 @@
 #include <cstring>
 #include <chrono>
 #include <string>
+#include <atomic>
+#include "scoped_fd.hpp"
 
 namespace {
 static constexpr int kPacketSize = 4096;
@@ -81,42 +83,39 @@ int NetPing::packIcmp(struct icmp* icmp, uint16_t id, uint16_t seq) {
 }
 
 int NetPing::ping(const std::string& host, const std::string& ifaceName, int timeoutMs) {
-    int sockfd = socket(AF_INET, SOCK_RAW, IPPROTO_ICMP);
-    if (sockfd < 0) {
+    weaknet_dbus::ScopedFd socket_fd(socket(AF_INET, SOCK_RAW, IPPROTO_ICMP));
+    if (!socket_fd) {
         return -1;
     }
 
     // Bind to device
     struct ifreq ifr{};
     std::snprintf(ifr.ifr_name, IFNAMSIZ, "%s", ifaceName.c_str());
-    if (setsockopt(sockfd, SOL_SOCKET, SO_BINDTODEVICE, &ifr, sizeof(ifr)) < 0) {
-        close(sockfd);
+    if (setsockopt(socket_fd.get(), SOL_SOCKET, SO_BINDTODEVICE, &ifr, sizeof(ifr)) < 0) {
         return -2;
     }
 
     // Resolve destination
     struct sockaddr_in dest{};
     if (!resolveHostIPv4(host, dest)) {
-        close(sockfd);
         return -3;
     }
 
     // Optional: enlarge recv buffer
     int recvBuf = 64 * 1024;
-    setsockopt(sockfd, SOL_SOCKET, SO_RCVBUF, &recvBuf, sizeof(recvBuf));
+    setsockopt(socket_fd.get(), SOL_SOCKET, SO_RCVBUF, &recvBuf, sizeof(recvBuf));
 
     // Build ICMP
     struct icmp icmpPacket{};
     uint16_t id = static_cast<uint16_t>(getpid());
-    static uint16_t seq = 0;
+    static std::atomic<uint16_t> seq{0};
     packIcmp(&icmpPacket, id, ++seq);
 
     // Send and measure send duration
     auto t0 = std::chrono::steady_clock::now();
-    ssize_t sent = sendto(sockfd, &icmpPacket, sizeof(icmpPacket), 0,
+    ssize_t sent = sendto(socket_fd.get(), &icmpPacket, sizeof(icmpPacket), 0,
                           reinterpret_cast<struct sockaddr*>(&dest), sizeof(dest));
     if (sent < 0) {
-        close(sockfd);
         return -4;
     }
     auto t1 = std::chrono::steady_clock::now();
@@ -125,23 +124,21 @@ int NetPing::ping(const std::string& host, const std::string& ifaceName, int tim
     // Wait for reply
     fd_set rfds;
     FD_ZERO(&rfds);
-    FD_SET(sockfd, &rfds);
+    FD_SET(socket_fd.get(), &rfds);
     struct timeval tv{};
     tv.tv_sec = timeoutMs / 1000;
     tv.tv_usec = (timeoutMs % 1000) * 1000;
 
-    int rv = select(sockfd + 1, &rfds, nullptr, nullptr, &tv);
+    int rv = select(socket_fd.get() + 1, &rfds, nullptr, nullptr, &tv);
     if (rv <= 0) {
-        close(sockfd);
         return (rv == 0) ? -5 : -6; // timeout / select error
     }
 
     char buf[kPacketSize];
     struct sockaddr_in src{};
     socklen_t slen = sizeof(src);
-    ssize_t n = recvfrom(sockfd, buf, sizeof(buf), 0, reinterpret_cast<struct sockaddr*>(&src), &slen);
+    ssize_t n = recvfrom(socket_fd.get(), buf, sizeof(buf), 0, reinterpret_cast<struct sockaddr*>(&src), &slen);
     if (n <= 0) {
-        close(sockfd);
         return -7;
     }
 
@@ -149,12 +146,10 @@ int NetPing::ping(const std::string& host, const std::string& ifaceName, int tim
     struct ip* iphdr = reinterpret_cast<struct ip*>(buf);
     int iphdrlen = iphdr->ip_hl * 4;
     if (n < iphdrlen + static_cast<ssize_t>(sizeof(struct icmp))) {
-        close(sockfd);
         return -8;
     }
     struct icmp* ricmp = reinterpret_cast<struct icmp*>(buf + iphdrlen);
     if (ricmp->icmp_type != ICMP_ECHOREPLY || ricmp->icmp_id != id) {
-        close(sockfd);
         return -9;
     }
 
@@ -164,7 +159,6 @@ int NetPing::ping(const std::string& host, const std::string& ifaceName, int tim
     gettimeofday(&now, nullptr);
     long rttMs = (now.tv_sec - sendTv->tv_sec) * 1000 + (now.tv_usec - sendTv->tv_usec) / 1000;
 
-    close(sockfd);
     return static_cast<int>(rttMs >= 0 ? rttMs : sendMs);
 }
 

@@ -8,6 +8,18 @@
 #include <chrono>
 #include <deque>
 #include <map>
+#include <stop_token>
+
+struct bpf_link;
+struct bpf_object;
+
+struct BpfObjectDeleter {
+    void operator()(bpf_object* object) const noexcept;
+};
+
+struct BpfLinkDeleter {
+    void operator()(bpf_link* link) const noexcept;
+};
 
 struct FlowRate {
     std::string src;
@@ -43,6 +55,7 @@ struct TrafficHistory {
 class NetTrafficAnalyzer {
 public:
     static std::shared_ptr<NetTrafficAnalyzer> getInstance();
+    ~NetTrafficAnalyzer();
 
     // 设置 eBPF 对象路径；TrafficAnalyzer resolves the build/install path.
     void setBpfObjectPath(const std::string& path);
@@ -51,13 +64,15 @@ public:
     bool initForInterface(const std::string& ifaceName);
 
     // 采样 intervalSec 秒窗口，返回 TopN 流信息
-    std::vector<FlowRate> sampleTopFlows(int intervalSec, int topN);
+    std::vector<FlowRate> sampleTopFlows(int intervalSec, int topN,
+                                         std::stop_token token = {});
 
     // 新增：异常流量检测功能
     std::vector<TrafficAnomaly> detectAnomalies(int intervalSec, 
                                                uint64_t burstThresholdBps = 10*1024*1024,  // 10MB/s
                                                uint64_t suspiciousThresholdBps = 50*1024*1024,  // 50MB/s
-                                               double burstMultiplier = 3.0);  // 突发倍数阈值
+                                               double burstMultiplier = 3.0,
+                                               std::stop_token token = {});  // 突发倍数阈值
 
     // 新增：获取流量历史统计
     std::map<std::string, TrafficHistory> getTrafficHistory();
@@ -72,26 +87,30 @@ public:
         size_t activeFlows = 0;
         std::chrono::system_clock::time_point timestamp;
     };
-    RealTimeStats getRealTimeStats();
+    RealTimeStats getRealTimeStats(std::stop_token token = {});
 
     // 新增：清理历史数据
     void clearHistory();
+    void shutdown() noexcept;
+    bool attached() const;
 
 private:
     NetTrafficAnalyzer() = default;
     static std::once_flag s_onceFlag;
     static std::shared_ptr<NetTrafficAnalyzer> s_instance;
 
-    std::string bpfObjPath_ = "server/build/flow_rate.bpf.o";
+    std::string bpfObjPath_;
     std::string boundIface_;
 
     // 句柄
-    void* bpfObj_ = nullptr; // bpf_object*
-    void* linkTcp_ = nullptr; // bpf_link*
-    void* linkUdp_ = nullptr; // bpf_link*
+    std::unique_ptr<bpf_object, BpfObjectDeleter> bpfObj_;
+    std::unique_ptr<bpf_link, BpfLinkDeleter> linkTcp_;
+    std::unique_ptr<bpf_link, BpfLinkDeleter> linkUdp_;
     int mapCurrFd_ = -1;
     int mapCfgFd_  = -1;
     bool attached_ = false;
+    mutable std::mutex resourceMutex_;
+    mutable std::mutex samplingMutex_;
 
     // 新增：异常检测相关
     mutable std::mutex historyMutex_;

@@ -7,6 +7,7 @@
 #include <string>
 #include <memory>
 #include <mutex>
+#include <stop_token>
 
 #include "net_info.hpp"
 #include "traffic_analyzer.hpp"
@@ -63,9 +64,10 @@ public:
     
     // 停止流量分析器
     void stopTrafficAnalysis();
+    void requestTrafficAnalysisStop() noexcept;
     
     // 更新当前上网网卡的流量分析数据
-    bool updateTrafficAnalysis(std::vector<NetInfo>& list);
+    bool updateTrafficAnalysis(std::vector<NetInfo>& list, std::stop_token token = {});
     
     // 获取流量分析器实例
     std::shared_ptr<TrafficAnalyzer> getTrafficAnalyzer() const;
@@ -87,12 +89,10 @@ public:
     bool updateTcpLossRateSafe(const std::string& iface_name, double loss_rate, const std::string& loss_level);
     
     // 线程安全的流量分析更新
-    bool updateTrafficAnalysisSafe();
+    bool updateTrafficAnalysisSafe(std::stop_token token = {});
     
     // 线程安全的当前使用接口更新
     bool updateCurrentUsingSafe();
 };
 
 }  // namespace weaknet_dbus
-
-

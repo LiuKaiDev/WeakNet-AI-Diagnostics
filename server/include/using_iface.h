@@ -21,6 +21,9 @@ public:
     // 启动后台监听（可重复调用，幂等）
     void start();
 
+    // 请求停止并等待后台监听退出（可重复调用，幂等）
+    void stop();
+
     // 获取当前用于上网的网卡名（依据默认路由与接口UP状态决定），无则返回空字符串
     std::string getCurrentInterface();
 

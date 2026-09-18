@@ -46,6 +46,7 @@ build/default/bin/test-client
 build/default/bin/example-client
 build/default/bin/ping-example
 build/default/lib/libweaknet.so
+build/default/libexec/weaknet/weaknet-ping-helper
 build/default/generated/bpf/vmlinux.h
 build/default/libexec/weaknet/flow_rate.bpf.o
 ```
@@ -102,16 +103,32 @@ ctest --test-dir build/no-ebpf --output-on-failure
 
 This mode does not discover, include, or directly link libbpf, libelf, or zlib. The existing V1 non-eBPF stubs are compiled, and the daemon continues in its established degraded traffic-analysis mode.
 
+## Phase 2 runtime directories
+
+The daemon no longer depends on its launch directory. Override its validated absolute paths with `WEAKNET_STATE_DIR`, `WEAKNET_LOG_DIR`, and `WEAKNET_RUNTIME_DIR`. The compatibility client uses the same state-directory rule for the retained `.bin` file API. See `PHASE2_RUNTIME.md` for defaults and lifecycle behavior.
+
 ## Runtime BPF object lookup
 
 When eBPF is enabled, the existing traffic analyzer resolves `flow_rate.bpf.o` in this order:
 
 1. `WEAKNET_BPF_OBJECT` environment override;
 2. executable-relative `../libexec/weaknet/flow_rate.bpf.o` in the build or install tree;
-3. executable-relative `../build/flow_rate.bpf.o` for temporary `server/bin` Make staging;
-4. the legacy V1 fallback `server/build/flow_rate.bpf.o`, relative to the process working directory.
+3. executable-relative `../build/flow_rate.bpf.o` for temporary `server/bin` Make staging.
 
-Only this BPF-object path was hardened in Phase 1. Existing log and `.bin` persistence paths remain working-directory-relative technical debt.
+There is no working-directory-relative fallback. A missing enabled object is reported as degraded runtime health.
+
+## Sanitizer builds
+
+```bash
+cmake -S . -B build/asan -G Ninja \
+  -DENABLE_EBPF=OFF -DBUILD_TESTING=ON \
+  -DWEAKNET_SANITIZER=address-undefined
+cmake --build build/asan --parallel
+ASAN_OPTIONS=detect_leaks=1 UBSAN_OPTIONS=halt_on_error=1 \
+  ctest --test-dir build/asan --output-on-failure
+```
+
+Use `-DWEAKNET_SANITIZER=thread` in a separate build for TSan. Do not combine TSan with ASan/UBSan.
 
 ## Tests
 
@@ -123,10 +140,11 @@ With `BUILD_TESTING=ON`, CTest builds deterministic, unprivileged tests for:
 - client version/build metadata;
 - the exact V1 exported C symbol set;
 - the static V1 D-Bus endpoint/member/signature fixture;
+- Phase 2 startup rollback, repeated lifecycle, resource-count, signal, active-Ping, degraded-health, and client-cleanup behavior;
 - retained shell-script syntax;
 - BPF object ELF and skeleton parsing when eBPF is enabled.
 
-No Phase 1 CTest loads eBPF, changes the host network, requires a default route, contacts the Internet, or starts the daemon.
+No CTest changes the host network, requires a default route, or contacts the Internet. Phase 2 process tests start the daemon only on a private session bus with test-scoped writable directories and terminate it through SIGINT/SIGTERM.
 
 Disable tests with:
 
@@ -144,7 +162,7 @@ Install into a staging prefix without modifying system directories:
 cmake --install build/default --prefix /tmp/weaknet-install
 ```
 
-Installed files include the unchanged daemon/client tool names, `libweaknet.so`, the public C header, supported examples, and (when enabled) `libexec/weaknet/flow_rate.bpf.o`.
+Installed files include the unchanged daemon/client tool names, `libweaknet.so`, the public C header, supported examples, the private `libexec/weaknet/weaknet-ping-helper`, and (when enabled) `libexec/weaknet/flow_rate.bpf.o`.
 
 ## Temporary Make compatibility
 

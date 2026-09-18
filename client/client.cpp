@@ -15,6 +15,7 @@
 #include "serializer.hpp"
 #include "weaknet_client.h"
 #include "logger.hpp"
+#include "runtime_config.hpp"
 
 namespace weaknet_dbus {
 
@@ -170,7 +171,8 @@ private:
             // 读取服务端序列化到文件的信号负载
             ChangedPayload restored{};
             std::string ferr;
-            if (deserializeChangedPayloadFromFile(kSignalSerializedFile, &restored, &ferr)) {
+            const auto signal_file = RuntimeConfig::fromEnvironment().signalFile();
+            if (deserializeChangedPayloadFromFile(signal_file.string(), &restored, &ferr)) {
                 LOG_INFO(LogModule::CLIENT, "从文件读取的详细信息: text='" << restored.message << "', counter=" << restored.counter);
             }
             return true;
@@ -502,7 +504,8 @@ public:
     // 读取最新的网络接口状态（从序列化文件）
     bool getLatestFromFile(std::string& result, std::string& errorMsg) {
         std::string file_err;
-        if (deserializeGetReplyFromFile(kGetReplySerializedFile, &result, &file_err)) {
+        const auto file = RuntimeConfig::fromEnvironment().getReplyFile();
+        if (deserializeGetReplyFromFile(file.string(), &result, &file_err)) {
             return true;
         } else {
             errorMsg = std::string("读取序列化文件失败: ") + file_err;
@@ -699,36 +702,44 @@ public:
 };
 
 // 全局客户端实例（单例模式）
-static WeakNetClient* g_client = nullptr;
+static std::mutex g_client_mutex;
+static std::shared_ptr<WeakNetClient> g_client;
+static std::once_flag g_dbus_threads_once;
+
+static std::shared_ptr<WeakNetClient> clientSnapshot() {
+    std::lock_guard lock(g_client_mutex);
+    return g_client;
+}
 
 // 初始化客户端
 extern "C" bool weaknet_init() {
-    if (g_client) {
-        return g_client->isConnected();
-    }
-    
-    g_client = new WeakNetClient();
-    return g_client->connect();
+    std::call_once(g_dbus_threads_once, [] { dbus_threads_init_default(); });
+    std::lock_guard lock(g_client_mutex);
+    if (g_client) return g_client->isConnected();
+    auto client = std::make_shared<WeakNetClient>();
+    if (!client->connect()) return false;
+    g_client = std::move(client);
+    return true;
 }
 
 // 清理客户端
 extern "C" void weaknet_cleanup() {
-    if (g_client) {
-        g_client->disconnect();
-        delete g_client;
-        g_client = nullptr;
-    }
+    std::lock_guard lock(g_client_mutex);
+    std::shared_ptr<WeakNetClient> client;
+    client.swap(g_client);
+    if (client) client->disconnect();
 }
 
 // 获取当前网络接口信息
 extern "C" bool weaknet_get_interfaces(char* buffer, size_t buffer_size, char* error_buffer, size_t error_size) {
-    if (!g_client || !g_client->isConnected()) {
+    const auto client = clientSnapshot();
+    if (!client || !client->isConnected()) {
         snprintf(error_buffer, error_size, "客户端未连接");
         return false;
     }
 
     std::string result, errorMsg;
-    if (g_client->getInterfaces(result, errorMsg)) {
+    if (client->getInterfaces(result, errorMsg)) {
         snprintf(buffer, buffer_size, "%s", result.c_str());
         return true;
     } else {
@@ -739,13 +750,14 @@ extern "C" bool weaknet_get_interfaces(char* buffer, size_t buffer_size, char* e
 
 // 获取网络状态变化（非阻塞）
 extern "C" bool weaknet_check_changes(char* message_buffer, size_t message_size, int32_t* counter, char* error_buffer, size_t error_size) {
-    if (!g_client || !g_client->isConnected()) {
+    const auto client = clientSnapshot();
+    if (!client || !client->isConnected()) {
         snprintf(error_buffer, error_size, "客户端未连接");
         return false;
     }
 
     std::string message;
-    if (g_client->checkForChanges(message, *counter)) {
+    if (client->checkForChanges(message, *counter)) {
         snprintf(message_buffer, message_size, "%s", message.c_str());
         return true;
     }
@@ -756,13 +768,14 @@ extern "C" bool weaknet_check_changes(char* message_buffer, size_t message_size,
 
 // 请求网络健康检查
 extern "C" bool weaknet_health_check(char* result_buffer, size_t result_size, char* error_buffer, size_t error_size) {
-    if (!g_client || !g_client->isConnected()) {
+    const auto client = clientSnapshot();
+    if (!client || !client->isConnected()) {
         snprintf(error_buffer, error_size, "客户端未连接");
         return false;
     }
 
     std::string result, errorMsg;
-    if (g_client->requestHealthCheck(result, errorMsg)) {
+    if (client->requestHealthCheck(result, errorMsg)) {
         snprintf(result_buffer, result_size, "%s", result.c_str());
         return true;
     } else {
@@ -773,13 +786,14 @@ extern "C" bool weaknet_health_check(char* result_buffer, size_t result_size, ch
 
 // 从文件读取最新状态（离线模式）
 extern "C" bool weaknet_get_from_file(char* buffer, size_t buffer_size, char* error_buffer, size_t error_size) {
-    if (!g_client) {
+    const auto client = clientSnapshot();
+    if (!client) {
         snprintf(error_buffer, error_size, "客户端未初始化");
         return false;
     }
 
     std::string result, errorMsg;
-    if (g_client->getLatestFromFile(result, errorMsg)) {
+    if (client->getLatestFromFile(result, errorMsg)) {
         snprintf(buffer, buffer_size, "%s", result.c_str());
         return true;
     } else {
@@ -790,7 +804,8 @@ extern "C" bool weaknet_get_from_file(char* buffer, size_t buffer_size, char* er
 
 // Ping指定主机
 extern "C" bool weaknet_ping_host(const char* hostname, char* result_buffer, size_t result_size, char* error_buffer, size_t error_size) {
-    if (!g_client || !g_client->isConnected()) {
+    const auto client = clientSnapshot();
+    if (!client || !client->isConnected()) {
         snprintf(error_buffer, error_size, "客户端未连接");
         return false;
     }
@@ -801,7 +816,7 @@ extern "C" bool weaknet_ping_host(const char* hostname, char* result_buffer, siz
     }
 
     std::string result, errorMsg;
-    if (g_client->pingHost(std::string(hostname), result, errorMsg)) {
+    if (client->pingHost(std::string(hostname), result, errorMsg)) {
         snprintf(result_buffer, result_size, "%s", result.c_str());
         return true;
     } else {
@@ -816,10 +831,11 @@ extern "C" bool weaknet_ping_host(const char* hostname, char* result_buffer, siz
 
 // 订阅特定事件类型
 extern "C" bool weaknet_subscribe_event(const char* event_type, weaknet_event_callback_t callback) {
-    if (!weaknet_dbus::g_client || !weaknet_dbus::g_client->isConnected()) {
+    const auto client = weaknet_dbus::clientSnapshot();
+    if (!client || !client->isConnected()) {
         return false;
     }
-    return weaknet_dbus::g_client->subscribeToEvent(std::string(event_type));
+    return client->subscribeToEvent(std::string(event_type));
 }
 
 // 取消订阅事件（简化实现）
@@ -842,13 +858,14 @@ extern "C" bool weaknet_check_events(char* event_type_buffer, size_t event_type_
                                    char* message_buffer, size_t message_size, 
                                    int32_t* counter, char* source_buffer, size_t source_size,
                                    char* error_buffer, size_t error_size) {
-    if (!weaknet_dbus::g_client || !weaknet_dbus::g_client->isConnected()) {
+    const auto client = weaknet_dbus::clientSnapshot();
+    if (!client || !client->isConnected()) {
         snprintf(error_buffer, error_size, "客户端未连接");
         return false;
     }
 
     std::string eventType, message, source;
-    if (weaknet_dbus::g_client->checkForEvents(eventType, message, *counter, source)) {
+    if (client->checkForEvents(eventType, message, *counter, source)) {
         snprintf(event_type_buffer, event_type_size, "%s", eventType.c_str());
         snprintf(message_buffer, message_size, "%s", message.c_str());
         snprintf(source_buffer, source_size, "%s", source.c_str());
@@ -861,7 +878,8 @@ extern "C" bool weaknet_check_events(char* event_type_buffer, size_t event_type_
 
 // 检查客户端连接状态
 extern "C" bool weaknet_is_connected() {
-    return weaknet_dbus::g_client && weaknet_dbus::g_client->isConnected();
+    const auto client = weaknet_dbus::clientSnapshot();
+    return client && client->isConnected();
 }
 
 // 获取WeakNet客户端库版本信息
@@ -878,7 +896,8 @@ extern "C" bool weaknet_get_build_info(char* buffer, size_t buffer_size) {
 
 // 订阅网络质量事件
 extern "C" bool weaknet_subscribe_network_quality(weaknet_network_quality_callback_t callback) {
-    if (!weaknet_dbus::g_client || !weaknet_dbus::g_client->isConnected()) {
+    const auto client = weaknet_dbus::clientSnapshot();
+    if (!client || !client->isConnected()) {
         return false;
     }
     
@@ -893,21 +912,22 @@ extern "C" bool weaknet_subscribe_network_quality(weaknet_network_quality_callba
         return false;
     };
     
-    return weaknet_dbus::g_client->subscribeToNetworkQuality(cpp_callback);
+    return client->subscribeToNetworkQuality(cpp_callback);
 }
 
 // 非阻塞检查网络质量事件
 extern "C" bool weaknet_check_network_quality(char* quality_buffer, size_t quality_size,
                                              char* details_buffer, size_t details_size, 
                                              int32_t* counter, char* error_buffer, size_t error_size) {
-    if (!weaknet_dbus::g_client || !weaknet_dbus::g_client->isConnected()) {
+    const auto client = weaknet_dbus::clientSnapshot();
+    if (!client || !client->isConnected()) {
         snprintf(error_buffer, error_size, "客户端未连接");
         return false;
     }
 
     std::string quality, details;
     std::string errorMsg;
-    if (weaknet_dbus::g_client->checkNetworkQuality(quality, details, *counter, errorMsg)) {
+    if (client->checkNetworkQuality(quality, details, *counter, errorMsg)) {
         snprintf(quality_buffer, quality_size, "%s", quality.c_str());
         snprintf(details_buffer, details_size, "%s", details.c_str());
         return true;

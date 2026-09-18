@@ -19,26 +19,30 @@ public:
     
     // 停止流量分析线程
     void stop();
+    void requestStop() noexcept;
     
     // 检查是否正在运行
     bool isRunning() const { return running_.load(); }
+    bool hasEbpf() const { return analyzer_ && analyzer_->attached(); }
     
     // 获取当前流量统计
     NetTrafficAnalyzer::RealTimeStats getCurrentStats() const;
     
     // 获取Top流量连接
-    std::vector<FlowRate> getTopFlows(int sample_seconds = 5, int top_count = 10) const;
+    std::vector<FlowRate> getTopFlows(int sample_seconds = 5, int top_count = 10,
+                                      std::stop_token token = {}) const;
     
     // 检测流量异常
-    std::vector<TrafficAnomaly> detectAnomalies(int detection_seconds = 5) const;
+    std::vector<TrafficAnomaly> detectAnomalies(int detection_seconds = 5,
+                                                 std::stop_token token = {}) const;
     
     // 获取流量历史
     std::map<std::string, TrafficHistory> getTrafficHistory() const;
 
 private:
-    void analyzeLoop();
+    void analyzeLoop(std::stop_token token);
     
-    std::unique_ptr<std::thread> thread_;
+    std::jthread thread_;
     std::atomic<bool> running_;
     std::string interface_;
     int interval_seconds_;

@@ -6,18 +6,21 @@
 #include <string>
 #include <vector>
 #include <mutex>
+#include <memory>
+#include "ping_executor.hpp"
 
 struct DBusConnection;
 struct DBusMessage;
 
 namespace weaknet_dbus {
 
-class ServerContext;
+struct ServerContext;
 
 class DbusService {
 public:
-    explicit DbusService(ServerContext* ctx);
-    ~DbusService() = default;
+    explicit DbusService(ServerContext* ctx, PingExecutor::Operation ping_operation = {},
+                         std::string ping_helper_path = {});
+    ~DbusService();
 
     // 注册对象路径与消息处理器
     bool register_on_connection(DBusConnection* conn);
@@ -38,6 +41,7 @@ public:
     bool handleListInterfaces(DBusConnection* conn, DBusMessage* msg);
     bool handleHealthCheck(DBusConnection* conn, DBusMessage* msg);
     bool handlePing(DBusConnection* conn, DBusMessage* msg);
+    void beginShutdown() noexcept;
 
 private:
     // 将字符串数组作为返回
@@ -45,7 +49,8 @@ private:
 
 private:
     ServerContext* ctx_;
+    std::mutex output_mutex_;
+    std::unique_ptr<PingExecutor> ping_executor_;
 };
 
 }  // namespace weaknet_dbus
-

@@ -4,15 +4,16 @@
 #pragma once
 
 #include <string>
+#include <stop_token>
 
 namespace weaknet_dbus {
 
-class ServerContext;
+struct ServerContext;
 
 // 创建并启动 RTT 监控线程
 // host: 目标主机（如 1.1.1.1 / 8.8.8.8 / 自定义域名）
-void start_rtt_monitor_thread(ServerContext* ctx, const std::string& host, int intervalMs = 2000, int timeoutMs = 800);
+void run_rtt_monitor(ServerContext* ctx, std::stop_token token,
+                     const std::string& host, int intervalMs = 2000,
+                     int timeoutMs = 800);
 
 }  // namespace weaknet_dbus
-
-

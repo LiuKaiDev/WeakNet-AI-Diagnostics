@@ -8,6 +8,8 @@
 #include <chrono>
 #include <functional>
 #include <memory>
+#include <atomic>
+#include <mutex>
 #include "net_info.hpp"
 
 namespace weaknet_dbus {
@@ -81,6 +83,8 @@ private:
     
     struct ServerContext* server_ctx_;
     bool monitoring_active_;
+    mutable std::mutex mutex_;
+    std::atomic<int32_t> event_counter_{0};
     
     void invokeCallbacks(EventType type, const NetworkEvent& event);
     std::string getSignalName(EventType type) const;
