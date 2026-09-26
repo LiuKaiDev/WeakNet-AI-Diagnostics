@@ -32,6 +32,7 @@ EventKind NetworkEvent::kindFor(const NetworkEventPayload& payload) noexcept {
         if constexpr (std::is_same_v<T, TcpInfoObservation>) return EventKind::TcpInfoObservation;
         if constexpr (std::is_same_v<T, TcpIntervalMetrics>) return EventKind::TcpIntervalMetric;
         if constexpr (std::is_same_v<T, SocketRouteContextObservation>) return EventKind::SocketRouteObservation;
+        if constexpr (std::is_same_v<T, IncidentObservation>) return EventKind::IncidentObservation;
         return EventKind::CollectorHealth;
     }, payload);
 }
@@ -79,6 +80,15 @@ NetworkEvent::NetworkEvent(NetworkEventHeader header, NetworkEventPayload payloa
             throw std::invalid_argument("SocketRouteContextObservation namespace/identity mismatch");
         }
     }
+    if (const auto* incident = std::get_if<IncidentObservation>(&payload_)) {
+        const auto scope_matches = std::visit([&](const auto& scope) {
+            using Scope = std::decay_t<decltype(scope)>;
+            if constexpr (std::is_same_v<Scope, SocketId>) return scope.netns == header_.netns;
+            if constexpr (std::is_same_v<Scope, NetnsId>) return scope == header_.netns;
+            return true;  // InterfaceId is namespace-scoped by the header.
+        }, incident->scope);
+        if (!scope_matches) throw std::invalid_argument("IncidentObservation scope namespace mismatch");
+    }
     if (header_.kind != kindFor(payload_)) {
         throw std::invalid_argument("NetworkEvent header kind does not match payload");
     }
@@ -101,6 +111,7 @@ bool NetworkEvent::replaceable() const noexcept {
         case EventKind::TcpInfoObservation:
         case EventKind::TcpIntervalMetric:
         case EventKind::SocketRouteObservation:
+        case EventKind::IncidentObservation:
             return false;
     }
     return false;

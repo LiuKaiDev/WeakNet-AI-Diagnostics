@@ -117,6 +117,7 @@ TcpIntervalResult TcpIntervalCalculator::calculate(const TcpInfoObservation& pre
         }
     }
     if (data_out && metrics.delta_total_retrans) {
+        metrics.delta_data_segs_out = *data_out;
         if (*data_out == 0) zero_denominator = true;
         else metrics.retransmission_segment_ratio =
             static_cast<double>(*metrics.delta_total_retrans) / static_cast<double>(*data_out);

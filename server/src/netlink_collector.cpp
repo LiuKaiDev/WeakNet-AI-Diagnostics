@@ -471,7 +471,7 @@ void NetlinkCollector::publishChanges(const TopologySnapshot& before, const Topo
     for (const auto& fact : before.routes) if (std::none_of(after.routes.begin(), after.routes.end(), [&](const RouteFact& current) { return current.identity() == fact.identity(); })) { ParsedMessage message; message.kind = ParsedMessageKind::Route; message.route = fact; message.route->present = false; publishMessage(message); }
     const auto old_uplink = UplinkPolicy{}.select(before);
     const auto new_uplink = UplinkPolicy{}.select(after);
-    const bool changed = old_uplink.method_flags != new_uplink.method_flags ||
+    const bool changed = after.authoritative || old_uplink.method_flags != new_uplink.method_flags ||
         old_uplink.validity != new_uplink.validity ||
         old_uplink.interface.has_value() != new_uplink.interface.has_value() ||
         (old_uplink.interface && new_uplink.interface && *old_uplink.interface != *new_uplink.interface);

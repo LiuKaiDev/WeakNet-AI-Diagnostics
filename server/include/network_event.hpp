@@ -130,6 +130,7 @@ enum class EventKind : std::uint8_t {
     TcpInfoObservation,
     TcpIntervalMetric,
     SocketRouteObservation,
+    IncidentObservation,
 };
 
 enum class EventSource : std::uint8_t {
@@ -142,6 +143,7 @@ enum class EventSource : std::uint8_t {
     V1WifiMonitor,
     Runtime,
     SocketTracker,
+    IncidentEngine,
 };
 
 enum class SocketLifecycleState : std::uint8_t {
@@ -228,6 +230,7 @@ struct TcpIntervalMetrics {
     std::optional<double> data_segs_out_per_sec;
     std::optional<double> data_segs_in_per_sec;
     std::optional<std::uint64_t> delta_total_retrans;
+    std::optional<std::uint64_t> delta_data_segs_out;
     std::optional<double> retransmission_segment_ratio;
     Validity validity{Validity::Valid};
     std::optional<TcpMetricUnavailableReason> unavailable_reason;
@@ -310,6 +313,93 @@ struct SocketRouteContextObservation {
     bool topology_authoritative{false};
 };
 
+enum class IncidentType : std::uint8_t {
+    HighTcpRtt,
+    ElevatedTcpRetransmission,
+    RouteUnavailable,
+    UplinkUnavailable,
+    SocketRouteConflict,
+};
+
+enum class IncidentState : std::uint8_t {
+    Pending,
+    Active,
+    Resolved,
+};
+
+enum class IncidentSeverity : std::uint8_t {
+    Info,
+    Warning,
+    Critical,
+};
+
+enum class IncidentEvidenceUnit : std::uint8_t {
+    None,
+    Microseconds,
+    Ratio,
+    Count,
+};
+
+enum class IncidentEvidenceCompleteness : std::uint8_t {
+    Complete,
+    Partial,
+    Unavailable,
+};
+
+enum class IncidentConfidence : std::uint8_t {
+    Unknown,
+    Partial,
+    High,
+};
+
+// Scope is typed identity, never a user-facing string.  A namespace scope is
+// used for the modeled uplink rule; socket-scoped rules retain full
+// generation identity so tuple reuse cannot transfer an incident.
+using IncidentScope = std::variant<SocketId, InterfaceId, NetnsId>;
+
+struct IncidentId {
+    std::uint64_t value{};
+    auto operator<=>(const IncidentId&) const = default;
+};
+
+struct IncidentEvidenceValue {
+    std::variant<std::uint64_t, double> value{std::uint64_t{}};
+    auto operator<=>(const IncidentEvidenceValue&) const = default;
+};
+
+struct IncidentEvidence {
+    EventKind source_kind{EventKind::CollectorHealth};
+    EventSource source{EventSource::Runtime};
+    IncidentScope scope{NetnsId{}};
+    RealtimeTime observed_at{};
+    MonotonicTime monotonic_at{};
+    std::optional<IncidentEvidenceValue> value;
+    IncidentEvidenceUnit unit{IncidentEvidenceUnit::None};
+    Validity validity{Validity::Unavailable};
+    std::string condition;
+};
+
+struct IncidentObservation {
+    IncidentId id;
+    IncidentType type{IncidentType::HighTcpRtt};
+    IncidentScope scope{NetnsId{}};
+    IncidentState state{IncidentState::Active};
+    IncidentSeverity severity{IncidentSeverity::Warning};
+    IncidentConfidence confidence{IncidentConfidence::Unknown};
+    RealtimeTime opened_at{};
+    MonotonicTime opened_monotonic_at{};
+    RealtimeTime last_updated_at{};
+    MonotonicTime last_updated_monotonic_at{};
+    std::optional<RealtimeTime> resolved_at;
+    std::optional<MonotonicTime> resolved_monotonic_at;
+    std::vector<IncidentEvidence> evidence;
+    std::string condition;
+    std::optional<std::string> resolution_condition;
+    Validity validity{Validity::Valid};
+    IncidentEvidenceCompleteness evidence_completeness{IncidentEvidenceCompleteness::Complete};
+    EventSource source{EventSource::IncidentEngine};
+};
+
 using TcpObservation = TcpInfoObservation;
 using TcpIntervalObservation = TcpIntervalMetrics;
 
@@ -383,7 +473,7 @@ using NetworkEventPayload = std::variant<
     LinkObservation, AddressObservation, RouteObservation, InterfaceObservation, UplinkObservation, ProbeRttObservation,
     TcpLossObservation, TrafficObservation, WifiRssiObservation,
     CollectorHealthObservation, SocketObservation, TcpInfoObservation,
-    TcpIntervalMetrics, SocketRouteContextObservation>;
+    TcpIntervalMetrics, SocketRouteContextObservation, IncidentObservation>;
 
 struct NetworkEventHeader {
     std::uint16_t schema_version{kNetworkEventSchemaVersion};
@@ -446,5 +536,10 @@ template <> struct std::hash<weaknet_dbus::v2::SocketId> {
         const auto generation = std::hash<std::uint64_t>{}(id.generation.value);
         return first ^ (second + 0x9e3779b9U + (first << 6U) + (first >> 2U)) ^
             (cookie + 0x9e3779b9U + (second << 6U) + (second >> 2U)) ^ generation;
+    }
+};
+template <> struct std::hash<weaknet_dbus::v2::IncidentId> {
+    std::size_t operator()(weaknet_dbus::v2::IncidentId id) const noexcept {
+        return std::hash<std::uint64_t>{}(id.value);
     }
 };

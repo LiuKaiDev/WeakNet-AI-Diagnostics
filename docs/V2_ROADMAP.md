@@ -298,6 +298,9 @@ Tests:
 
 ## Phase 8: IncidentEngine
 
+Status: the first deterministic detection/lifecycle stage is implemented in
+the current working tree. Root-cause correlation remains deferred to Phase 9.
+
 Objective: turn valid event/metric windows into deterministic incident lifecycles.
 
 Scope:
@@ -307,6 +310,12 @@ Scope:
 - add initial incidents for link/uplink, latency, valid retransmission elevation, Wi-Fi signal, and collector degradation;
 - persist recent incident history only if needed through a versioned bounded store;
 - publish incident transitions on EventBus.
+
+The implemented first stage supports bounded `HighTcpRtt`,
+`ElevatedTcpRetransmission`, `RouteUnavailable`, `UplinkUnavailable`, and
+`SocketRouteConflict` state machines with typed scope/evidence, consecutive
+sample hysteresis, socket-generation isolation, and bounded current/history
+state. It does not implement causal inference or RootCauseEngine behavior.
 
 Acceptance criteria:
 

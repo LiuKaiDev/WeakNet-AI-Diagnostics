@@ -18,6 +18,7 @@
 #include "v1_observation_adapter.hpp"
 #include "netlink_collector.hpp"
 #include "socket_tracker.hpp"
+#include "incident_engine.hpp"
 
 namespace weaknet_dbus {
 
@@ -67,6 +68,7 @@ private:
     std::unique_ptr<v2::NetlinkCollector> topology_collector_;
     std::unique_ptr<v2::SocketTracker> socket_tracker_;
     std::unique_ptr<v2::SocketRouteAttributor> socket_route_attributor_;
+    std::unique_ptr<v2::IncidentEngine> incident_engine_;
     std::stop_source stop_source_;
     std::atomic<bool> started_{false};
     std::atomic<bool> stopped_{false};

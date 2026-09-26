@@ -35,6 +35,10 @@ weaknet_add_cpp_test(socket_route_attribution socket_route_attribution_test.cpp)
 target_link_libraries(socket_route_attribution PRIVATE weaknet_data_plane)
 set_tests_properties(socket_route_attribution PROPERTIES LABELS "phase5.4")
 
+weaknet_add_cpp_test(incident_engine incident_engine_test.cpp)
+target_link_libraries(incident_engine PRIVATE weaknet_data_plane)
+set_tests_properties(incident_engine PROPERTIES LABELS "phase8")
+
 weaknet_add_cpp_test(event_bus_concurrency event_bus_test.cpp)
 target_link_libraries(event_bus_concurrency PRIVATE weaknet_data_plane Threads::Threads)
 set_tests_properties(event_bus_concurrency PROPERTIES LABELS "phase3;concurrency")

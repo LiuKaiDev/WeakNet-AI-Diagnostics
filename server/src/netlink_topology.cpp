@@ -78,7 +78,8 @@ UplinkSelection UplinkPolicy::select(const TopologySnapshot& snapshot) const {
     }
     result.method_flags = (has_v4 ? 1U : 0U) | (has_v6 ? 2U : 0U);
     if (candidates.empty()) {
-        result.validity = snapshot.authoritative ? Validity::Unavailable : Validity::Stale;
+        result.validity = snapshot.authoritative && !snapshot.partial && !snapshot.degraded
+            ? Validity::Unavailable : Validity::Stale;
         result.evidence = "no usable unicast default route in table main/default";
         return result;
     }
