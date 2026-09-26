@@ -3,6 +3,7 @@
 #include <chrono>
 #include <compare>
 #include <cstdint>
+#include <array>
 #include <functional>
 #include <optional>
 #include <stdexcept>
@@ -44,9 +45,49 @@ struct InterfaceId {
     }
 };
 
+enum class SocketProtocol : std::uint8_t {
+    Tcp = 6,
+};
+
+struct SocketEndpoint {
+    std::uint8_t family{};
+    std::array<std::uint8_t, 16> address{};
+    std::uint16_t port{};
+
+    auto operator<=>(const SocketEndpoint&) const = default;
+    std::string toString() const;
+};
+
+struct SocketTuple {
+    NetnsId netns;
+    SocketProtocol protocol{SocketProtocol::Tcp};
+    std::uint8_t family{};
+    SocketEndpoint local;
+    SocketEndpoint remote;
+
+    auto operator<=>(const SocketTuple&) const = default;
+};
+
+struct KernelSocketCookie {
+    std::uint64_t value{};
+    auto operator<=>(const KernelSocketCookie&) const = default;
+};
+
+struct SocketGeneration {
+    std::uint64_t value{};
+    auto operator<=>(const SocketGeneration&) const = default;
+};
+
 struct SocketId {
-    std::uint64_t cookie{};
-    std::uint64_t generation{};
+    NetnsId netns;
+    std::optional<KernelSocketCookie> cookie;
+    SocketGeneration generation;
+
+    SocketId() = default;
+    SocketId(NetnsId namespace_id, std::optional<KernelSocketCookie> socket_cookie,
+             SocketGeneration lifecycle_generation)
+        : netns(namespace_id), cookie(socket_cookie), generation(lifecycle_generation) {}
+
     auto operator<=>(const SocketId&) const = default;
 };
 
@@ -79,6 +120,7 @@ enum class EventKind : std::uint8_t {
     TrafficMetric,
     WifiRssiMetric,
     CollectorHealth,
+    SocketObservation,
 };
 
 enum class EventSource : std::uint8_t {
@@ -90,6 +132,24 @@ enum class EventSource : std::uint8_t {
     V1TrafficMonitor,
     V1WifiMonitor,
     Runtime,
+    SocketTracker,
+};
+
+enum class SocketLifecycleState : std::uint8_t {
+    Active,
+    Closed,
+};
+
+struct SocketObservation {
+    SocketId id;
+    NetnsId netns;
+    SocketTuple tuple;
+    RealtimeTime observed_at{};
+    MonotonicTime monotonic_at{};
+    EventSource source{EventSource::SocketTracker};
+    Validity validity{Validity::Valid};
+    SocketLifecycleState lifecycle{SocketLifecycleState::Active};
+    bool present{true};
 };
 
 struct InterfaceObservation {
@@ -161,7 +221,7 @@ struct CollectorHealthObservation {
 using NetworkEventPayload = std::variant<
     LinkObservation, AddressObservation, RouteObservation, InterfaceObservation, UplinkObservation, ProbeRttObservation,
     TcpLossObservation, TrafficObservation, WifiRssiObservation,
-    CollectorHealthObservation>;
+    CollectorHealthObservation, SocketObservation>;
 
 struct NetworkEventHeader {
     std::uint16_t schema_version{kNetworkEventSchemaVersion};
@@ -218,7 +278,11 @@ template <> struct std::hash<weaknet_dbus::v2::InterfaceId> {
 };
 template <> struct std::hash<weaknet_dbus::v2::SocketId> {
     std::size_t operator()(const weaknet_dbus::v2::SocketId& id) const noexcept {
-        const auto first = std::hash<std::uint64_t>{}(id.cookie);
-        return first ^ (std::hash<std::uint64_t>{}(id.generation) + 0x9e3779b9U + (first << 6U) + (first >> 2U));
+        const auto first = std::hash<std::uint64_t>{}(id.netns.device);
+        const auto second = std::hash<std::uint64_t>{}(id.netns.inode);
+        const auto cookie = std::hash<std::uint64_t>{}(id.cookie ? id.cookie->value : 0);
+        const auto generation = std::hash<std::uint64_t>{}(id.generation.value);
+        return first ^ (second + 0x9e3779b9U + (first << 6U) + (first >> 2U)) ^
+            (cookie + 0x9e3779b9U + (second << 6U) + (second >> 2U)) ^ generation;
     }
 };

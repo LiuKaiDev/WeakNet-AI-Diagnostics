@@ -20,7 +20,9 @@ int main() {
     const InterfaceId renamed{7, "eth-new"};
     ok &= expect(first == renamed, "interface identity must be ifindex, not name");
     ok &= expect(NetnsId{11, 22} != NetnsId{11, 23}, "netns identity comparison failed");
-    ok &= expect(SocketId{4, 1} < SocketId{4, 2}, "socket generation ordering failed");
+    ok &= expect(SocketId{ns, KernelSocketCookie{4}, SocketGeneration{1}} <
+                     SocketId{ns, KernelSocketCookie{4}, SocketGeneration{2}},
+                 "socket generation ordering failed");
     std::unordered_set<EventId> ids{EventId{1}, EventId{1}, EventId{2}};
     ok &= expect(ids.size() == 2, "typed ID hashing failed");
 

@@ -2,10 +2,19 @@
 
 #include <sys/stat.h>
 
+#include <arpa/inet.h>
+
 #include <sstream>
 #include <type_traits>
 
 namespace weaknet_dbus::v2 {
+
+std::string SocketEndpoint::toString() const {
+    char buffer[INET6_ADDRSTRLEN]{};
+    if (!inet_ntop(family, address.data(), buffer, sizeof(buffer))) return {};
+    if (family == AF_INET6) return "[" + std::string(buffer) + "]:" + std::to_string(port);
+    return std::string(buffer) + ":" + std::to_string(port);
+}
 
 EventKind NetworkEvent::kindFor(const NetworkEventPayload& payload) noexcept {
     return std::visit([](const auto& value) {
@@ -19,6 +28,7 @@ EventKind NetworkEvent::kindFor(const NetworkEventPayload& payload) noexcept {
         if constexpr (std::is_same_v<T, TcpLossObservation>) return EventKind::TcpLossMetric;
         if constexpr (std::is_same_v<T, TrafficObservation>) return EventKind::TrafficMetric;
         if constexpr (std::is_same_v<T, WifiRssiObservation>) return EventKind::WifiRssiMetric;
+        if constexpr (std::is_same_v<T, SocketObservation>) return EventKind::SocketObservation;
         return EventKind::CollectorHealth;
     }, payload);
 }
@@ -34,8 +44,18 @@ NetworkEvent::NetworkEvent(NetworkEventHeader header, NetworkEventPayload payloa
     if (header_.netns.inode == 0) {
         throw std::invalid_argument("NetworkEvent requires a network namespace identity");
     }
+    if (header_.socket && header_.socket->netns != header_.netns) {
+        throw std::invalid_argument("NetworkEvent socket identity namespace mismatch");
+    }
     if (header_.interface && header_.interface->ifindex == 0) {
         throw std::invalid_argument("NetworkEvent interface ifindex must be nonzero");
+    }
+    if (const auto* socket = std::get_if<SocketObservation>(&payload_)) {
+        if (socket->netns != header_.netns || socket->id.netns != header_.netns ||
+            socket->tuple.netns != header_.netns ||
+            (header_.socket && *header_.socket != socket->id)) {
+            throw std::invalid_argument("SocketObservation namespace/identity mismatch");
+        }
     }
     if (header_.kind != kindFor(payload_)) {
         throw std::invalid_argument("NetworkEvent header kind does not match payload");
@@ -55,6 +75,7 @@ bool NetworkEvent::replaceable() const noexcept {
         case EventKind::InterfaceObservation:
         case EventKind::UplinkObservation:
         case EventKind::CollectorHealth:
+        case EventKind::SocketObservation:
             return false;
     }
     return false;
@@ -69,8 +90,12 @@ std::string NetworkEvent::coalescingKey() const {
     if (header_.interface) key << 'i' << header_.interface->ifindex;
     else key << "i-";
     key << ':';
-    if (header_.socket) key << 's' << header_.socket->cookie << ':' << header_.socket->generation;
-    else key << "s-";
+    if (header_.socket) {
+        key << 's' << header_.socket->netns.device << ':' << header_.socket->netns.inode << ':';
+        if (header_.socket->cookie) key << header_.socket->cookie->value;
+        else key << '-';
+        key << ':' << header_.socket->generation.value;
+    } else key << "s-";
     return key.str();
 }
 

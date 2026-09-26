@@ -21,8 +21,16 @@ Phase 1 through Phase 3 are now the implemented baseline. The top-level `CMakeLi
 - exact Phase 3 semantics in `docs/PHASE3_DATA_PLANE.md`.
 - the Phase 4 `netlink_parser.hpp`, `netlink_topology.hpp`, and `netlink_collector.hpp` path with deterministic parser/policy tests;
 - exact Phase 4 semantics in `docs/PHASE4_NETLINK.md`.
+- the Phase 5.1 model-only `socket_tracker.hpp`/`socket_tracker.cpp` path with deterministic identity and lifecycle tests;
+- exact Phase 5.1 semantics in `docs/PHASE5_SOCKET_TRACKER.md`.
 
-The later names `weaknetd` and `weaknetctl`, plus SocketTracker, IncidentEngine, and RootCauseEngine, remain target architecture and are not present yet. Read `server/src/application.cpp` after the Phase 1 targets, then read `docs/PHASE2_RUNTIME.md`, `docs/PHASE3_DATA_PLANE.md`, and `docs/PHASE4_NETLINK.md`; use later sections as the intended post-implementation order.
+The later names `weaknetd` and `weaknetctl`, plus the live SocketTracker,
+IncidentEngine, and RootCauseEngine, remain target architecture and are not
+present yet. The Phase 5.1 identity/lifecycle model is documented separately.
+Read `server/src/application.cpp` after the Phase 1 targets, then read
+`docs/PHASE2_RUNTIME.md`, `docs/PHASE3_DATA_PLANE.md`,
+`docs/PHASE4_NETLINK.md`, and `docs/PHASE5_SOCKET_TRACKER.md`; use later
+sections as the intended post-implementation order.
 
 ## Prerequisites
 
@@ -155,7 +163,16 @@ Then trace an incremental route notification and its reconciliation. Study route
 
 Treat transport startup and topology reconciliation as separate lifecycle stages. A socket create/configure/bind failure leaves the collector stopped, while a dump failure after the socket opens keeps the worker running with degraded telemetry and an empty non-authoritative or last-known-good snapshot. During a dump, sequence-0 link/address/route notifications are recorded but deliberately not merged; the candidate is rejected and resynced if any relevant notification races it. ENOBUFS and malformed/ambiguous notification application follow the same bounded recovery path. Follow the bounded 250 ms-to-five-second recovery backoff through a successful transactional commit; collector telemetry recovers immediately, although the current direct `RuntimeHealth` startup entry is not automatically refreshed.
 
-### 7. Read `SocketTracker` and TCP_INFO next
+### 7. Read the Phase 5.1 socket identity model
+
+Read `socket_tracker.hpp` and `socket_tracker.cpp` before any future kernel
+collector. Follow `SocketId`, `SocketTuple`, cookie availability, generation
+allocation, and the authoritative/partial snapshot boundary. Confirm that
+tuple reuse and cookie reuse receive new generations, while failed snapshots
+preserve active lifecycles. `SocketObservation` is a typed future event
+payload; this phase intentionally emits no live socket events.
+
+### 8. Read `SocketTracker` and TCP_INFO next
 
 Read socket identity/generation before reading metric calculations. Trace:
 
@@ -169,7 +186,7 @@ Read socket identity/generation before reading metric calculations. Trace:
 
 Pay special attention to fields that are gauges versus cumulative counters. Read counter reset, socket reuse, IPv4/IPv6, and partial-permission tests alongside the code.
 
-### 8. Cross the kernel boundary through eBPF
+### 9. Cross the kernel boundary through eBPF
 
 Read in this order:
 
@@ -193,13 +210,13 @@ For each kernel event, ask:
 
 Run or inspect the namespace integration tests; do not infer correctness solely from successful verifier loading.
 
-### 9. Read active probe and Wi-Fi collectors
+### 10. Read active probe and Wi-Fi collectors
 
 For probes, follow binding, request IDs, reply matching, monotonic timing, cancellation, rate limiting, and validity. Confirm that target reachability does not overwrite physical link state.
 
 For Wi-Fi, read nl80211 first and any read-only wpa_supplicant fallback second. Confirm that wired RSSI is “not applicable” and that the daemon never starts or reconfigures a network manager.
 
-### 10. Read `IncidentEngine`
+### 11. Read `IncidentEngine`
 
 Begin with incident schema and a single rule/state machine. Follow a metric window through:
 
@@ -211,7 +228,7 @@ Locate hysteresis, minimum sample count, cooldown, deduplication key, evidence r
 
 Remember: an incident is a detected condition (“latency elevated”), not yet a cause (“Wi-Fi signal caused it”).
 
-### 11. Read `RootCauseEngine`
+### 12. Read `RootCauseEngine`
 
 Start with the candidate/report schema, then one correlation rule. Trace supporting, contradicting, and missing evidence into confidence/ranking. Confirm the engine can abstain and can return alternatives.
 
@@ -223,7 +240,7 @@ Use three contrasting fixtures:
 
 You should be able to reproduce every result from the rule version and cited event/sample IDs without consulting an LLM.
 
-### 12. Read application services and D-Bus last among core modules
+### 13. Read application services and D-Bus last among core modules
 
 Now read the service facade and D-Bus introspection XML. Map each method/signal to a snapshot/query rather than collector internals.
 
@@ -240,7 +257,7 @@ Check:
 
 Read contract tests beside the XML. Then use `weaknetctl` to follow the same structured result.
 
-### 13. Read the WeakNet Lab
+### 14. Read the WeakNet Lab
 
 Read fixture creation and cleanup before scenarios. Verify that names, namespaces, qdiscs, and processes are uniquely scoped and always cleaned.
 
@@ -260,7 +277,7 @@ topology setup
 
 Scenario assertions should target structured schemas/evidence, not logs or prose.
 
-### 14. Read benchmarks and evaluation artifacts
+### 15. Read benchmarks and evaluation artifacts
 
 Read benchmark source before results. Verify workload, warmup, sample count, clock, environment metadata, correctness assertions, and raw artifact linkage.
 
@@ -274,7 +291,7 @@ Keep these separate:
 
 A number in a README without its run artifact is an example, not evidence.
 
-### 15. Read optional AI/RAG code last
+### 16. Read optional AI/RAG code last
 
 Begin with `IncidentBundle` schema/redaction, then provider-neutral agent interfaces, retrieval knowledge, report schema, and evaluation. Do not begin with provider SDK code.
 

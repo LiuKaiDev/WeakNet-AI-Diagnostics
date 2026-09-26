@@ -75,12 +75,14 @@ int main() {
     ok &= expect(stale && stale->validity == Validity::Stale,
                  "stale-after policy was not applied");
 
-    const auto second_key = key(NetnsId{2, 1}, 1, SocketId{8, 1});
+    const auto second_key = key(NetnsId{2, 1}, 1,
+                                SocketId{NetnsId{2, 1}, KernelSocketCookie{8}, SocketGeneration{1}});
     store.insert(sample(6, second_key, clock.monotonicNow()));
     ok &= expect(store.snapshot(NetnsId{1, 1}).size() == 1 &&
                  store.snapshot(NetnsId{2, 1}).size() == 1,
                  "network namespace filtering failed");
-    const auto third_key = key(NetnsId{1, 1}, 2, SocketId{8, 2});
+    const auto third_key = key(NetnsId{1, 1}, 2,
+                               SocketId{NetnsId{1, 1}, KernelSocketCookie{8}, SocketGeneration{2}});
     store.insert(sample(7, third_key, clock.monotonicNow()));
     ok &= expect(!store.latest(first_key), "deterministic oldest-series eviction failed");
     ok &= expect(store.latest(second_key) && store.latest(third_key),

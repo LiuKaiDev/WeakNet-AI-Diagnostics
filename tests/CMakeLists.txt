@@ -19,6 +19,10 @@ weaknet_add_cpp_test(network_event_schema network_event_test.cpp)
 target_link_libraries(network_event_schema PRIVATE weaknet_data_plane)
 set_tests_properties(network_event_schema PROPERTIES LABELS "phase3")
 
+weaknet_add_cpp_test(socket_lifecycle socket_lifecycle_test.cpp)
+target_link_libraries(socket_lifecycle PRIVATE weaknet_data_plane)
+set_tests_properties(socket_lifecycle PROPERTIES LABELS "phase5.1")
+
 weaknet_add_cpp_test(event_bus_concurrency event_bus_test.cpp)
 target_link_libraries(event_bus_concurrency PRIVATE weaknet_data_plane Threads::Threads)
 set_tests_properties(event_bus_concurrency PROPERTIES LABELS "phase3;concurrency")
