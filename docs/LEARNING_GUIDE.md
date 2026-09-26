@@ -33,6 +33,8 @@ RootCauseEngine now provides the first bounded deterministic hypothesis stage.
 The additive experimental V2 read-only D-Bus surface and `weaknetctl` query
 commands are implemented; read `docs/V2_API_AND_CLI.md` after the diagnosis
 engine documents.
+The first ActiveProbe evidence collector is implemented; read
+`docs/ACTIVE_PROBE.md` before treating probe observations as diagnosis.
 SocketTracker now provides the Phase 5.3 TCP_INFO metric path and Phase 5.4
 modeled route context. The first deterministic IncidentEngine stage is
 implemented; its incidents are not root causes and

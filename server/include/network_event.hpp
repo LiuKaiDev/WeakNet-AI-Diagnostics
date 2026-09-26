@@ -133,6 +133,7 @@ enum class EventKind : std::uint8_t {
     SocketRouteObservation,
     IncidentObservation,
     RootCauseHypothesisObservation,
+    ProbeObservation,
 };
 
 enum class EventSource : std::uint8_t {
@@ -147,6 +148,7 @@ enum class EventSource : std::uint8_t {
     SocketTracker,
     IncidentEngine,
     RootCauseEngine,
+    ActiveProbe,
 };
 
 enum class SocketLifecycleState : std::uint8_t {
@@ -493,6 +495,43 @@ struct RootCauseHypothesisObservation {
     auto operator<=>(const RootCauseHypothesisObservation&) const = default;
 };
 
+enum class ProbeTargetKind : std::uint8_t { Gateway, Remote };
+enum class ProbeStatus : std::uint8_t {
+    Success,
+    Timeout,
+    Unreachable,
+    TransportUnavailable,
+    NoTarget,
+    InvalidReply,
+    Error,
+};
+
+struct ProbeTarget {
+    ProbeTargetKind kind{ProbeTargetKind::Remote};
+    NetnsId netns;
+    std::uint8_t family{};
+    std::array<std::uint8_t, 16> address{};
+    std::optional<InterfaceId> interface;
+    std::uint64_t generation{};
+    std::string provenance;
+    auto operator<=>(const ProbeTarget&) const = default;
+};
+
+struct ProbeObservation {
+    ProbeTarget target;
+    NetnsId netns;
+    RealtimeTime observed_at{};
+    MonotonicTime monotonic_at{};
+    std::uint64_t sequence{};
+    ProbeStatus status{ProbeStatus::Error};
+    std::optional<std::uint64_t> rtt_us;
+    Validity validity{Validity::Unavailable};
+    EventSource source{EventSource::ActiveProbe};
+    std::string transport;
+    std::string failure_reason;
+    auto operator<=>(const ProbeObservation&) const = default;
+};
+
 using TcpObservation = TcpInfoObservation;
 using TcpIntervalObservation = TcpIntervalMetrics;
 
@@ -567,7 +606,7 @@ using NetworkEventPayload = std::variant<
     TcpLossObservation, TrafficObservation, WifiRssiObservation,
     CollectorHealthObservation, SocketObservation, TcpInfoObservation,
     TcpIntervalMetrics, SocketRouteContextObservation, IncidentObservation,
-    RootCauseHypothesisObservation>;
+    RootCauseHypothesisObservation, ProbeObservation>;
 
 struct NetworkEventHeader {
     std::uint16_t schema_version{kNetworkEventSchemaVersion};

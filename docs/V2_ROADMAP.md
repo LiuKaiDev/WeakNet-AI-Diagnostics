@@ -375,6 +375,10 @@ Status: the first read-only query/API/CLI slice is implemented in the current
 working tree. The V1 surface remains unchanged; deployment migration,
 write/configuration operations, and API freeze remain future work.
 
+The first ActiveProbe evidence slice is also implemented alongside this
+surface: typed gateway/remote IPv4 probe observations, bounded native ICMP
+transport, and lifecycle integration. Probe interpretation remains deferred.
+
 Objective: expose V2 as a production service while preserving explicit compatibility.
 
 Scope:

@@ -47,6 +47,10 @@ weaknet_add_cpp_test(diagnostics_query diagnostics_query_test.cpp)
 target_link_libraries(diagnostics_query PRIVATE weaknet_data_plane weaknet_server_core)
 set_tests_properties(diagnostics_query PROPERTIES LABELS "phase10")
 
+weaknet_add_cpp_test(active_probe active_probe_test.cpp)
+target_link_libraries(active_probe PRIVATE weaknet_data_plane)
+set_tests_properties(active_probe PROPERTIES LABELS "phase11")
+
 weaknet_add_cpp_test(event_bus_concurrency event_bus_test.cpp)
 target_link_libraries(event_bus_concurrency PRIVATE weaknet_data_plane Threads::Threads)
 set_tests_properties(event_bus_concurrency PROPERTIES LABELS "phase3;concurrency")

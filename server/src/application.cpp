@@ -248,9 +248,22 @@ bool DaemonApplication::start() {
     topology_collector_->setCommittedCallback(
         [this](const v2::TopologySnapshot& snapshot, const v2::UplinkSelection& uplink) {
             if (socket_tracker_) socket_tracker_->recomputeRouteContexts(snapshot, uplink);
+            if (active_probe_) active_probe_->updateTopology(snapshot, uplink);
         });
     socket_tracker_->recomputeRouteContexts(topology_collector_->snapshot(),
                                             topology_collector_->selectedUplink());
+    active_probe_ = std::make_unique<v2::ActiveProbe>(
+        event_bus_, clock_, *netns, v2::ProbeConfig{});
+    active_probe_->updateTopology(topology_collector_->snapshot(),
+                                  topology_collector_->selectedUplink());
+    if (!active_probe_->start()) {
+        health_.set("active_probe", RuntimeHealthState::Degraded, "worker_start_failed");
+        v2_adapter_->mirrorCollectorHealth("active_probe", v2::CollectorState::Degraded,
+                                           "worker_start_failed");
+    } else {
+        health_.set("active_probe", RuntimeHealthState::Running);
+        v2_adapter_->mirrorCollectorHealth("active_probe", v2::CollectorState::Running);
+    }
     if (!socket_tracker_->start()) {
         health_.set("socket_tracker", RuntimeHealthState::Degraded,
                     "transport_or_worker_start_failed");
@@ -410,6 +423,7 @@ void DaemonApplication::stop() noexcept {
     stopWorkers();
     if (root_cause_engine_) root_cause_engine_->stop();
     if (incident_engine_) incident_engine_->stop();
+    if (active_probe_) active_probe_->stop();
     if (socket_tracker_) socket_tracker_->stop();
     health_.set("socket_tracker", RuntimeHealthState::Stopped);
     if (topology_collector_) topology_collector_->stop();
@@ -430,6 +444,7 @@ void DaemonApplication::stop() noexcept {
     context_.diagnostics = nullptr;
     diagnostics_query_.reset();
     v2_adapter_.reset();
+    active_probe_.reset();
     topology_collector_.reset();
     socket_tracker_.reset();
     socket_route_attributor_.reset();

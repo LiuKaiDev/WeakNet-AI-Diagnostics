@@ -35,6 +35,7 @@ EventKind NetworkEvent::kindFor(const NetworkEventPayload& payload) noexcept {
         if constexpr (std::is_same_v<T, IncidentObservation>) return EventKind::IncidentObservation;
         if constexpr (std::is_same_v<T, RootCauseHypothesisObservation>)
             return EventKind::RootCauseHypothesisObservation;
+        if constexpr (std::is_same_v<T, ProbeObservation>) return EventKind::ProbeObservation;
         return EventKind::CollectorHealth;
     }, payload);
 }
@@ -100,6 +101,12 @@ NetworkEvent::NetworkEvent(NetworkEventHeader header, NetworkEventPayload payloa
         }, hypothesis->scope);
         if (!scope_matches) throw std::invalid_argument("RootCauseHypothesis scope namespace mismatch");
     }
+    if (const auto* probe = std::get_if<ProbeObservation>(&payload_)) {
+        if (probe->netns != header_.netns || probe->target.netns != header_.netns ||
+            (header_.interface && probe->target.interface &&
+             *header_.interface != *probe->target.interface))
+            throw std::invalid_argument("ProbeObservation namespace/identity mismatch");
+    }
     if (header_.kind != kindFor(payload_)) {
         throw std::invalid_argument("NetworkEvent header kind does not match payload");
     }
@@ -124,6 +131,7 @@ bool NetworkEvent::replaceable() const noexcept {
         case EventKind::SocketRouteObservation:
         case EventKind::IncidentObservation:
         case EventKind::RootCauseHypothesisObservation:
+        case EventKind::ProbeObservation:
             return false;
     }
     return false;
