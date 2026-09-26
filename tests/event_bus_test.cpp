@@ -33,7 +33,7 @@ NetworkEvent transition(std::uint64_t id) {
         EventKind::UplinkObservation, EventSource::V1UplinkMonitor,
         RealtimeTime{}, MonotonicTime{}, NetnsId{1, 2}, InterfaceId{1, "test"},
         std::nullopt, Validity::Partial, std::nullopt};
-    return NetworkEvent(header, UplinkObservation{"test", 1, true});
+    return NetworkEvent(header, UplinkObservation{"test", 1, true, {}});
 }
 }
 

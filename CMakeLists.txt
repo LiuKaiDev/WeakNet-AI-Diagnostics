@@ -99,6 +99,9 @@ add_library(weaknet_data_plane STATIC
     server/src/event_bus.cpp
     server/src/metric_store.cpp
     server/src/v1_observation_adapter.cpp
+    server/src/netlink_parser.cpp
+    server/src/netlink_topology.cpp
+    server/src/netlink_collector.cpp
 )
 target_link_libraries(weaknet_data_plane
     PUBLIC

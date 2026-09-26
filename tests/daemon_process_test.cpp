@@ -109,6 +109,28 @@ bool degradedHealthVisible(DBusConnection* connection) {
            value.find("\"overall\":\"degraded\"") != std::string::npos;
 }
 
+bool interfaceListMethodWorks(DBusConnection* connection, const char* method) {
+    DBusMessage* message = dbus_message_new_method_call(
+        kBusName, kObjectPath, kInterface, method);
+    if (!message) return false;
+    DBusError error;
+    dbus_error_init(&error);
+    DBusMessage* reply = dbus_connection_send_with_reply_and_block(
+        connection, message, 3000, &error);
+    dbus_message_unref(message);
+    if (!reply || dbus_error_is_set(&error)) {
+        if (dbus_error_is_set(&error)) dbus_error_free(&error);
+        if (reply) dbus_message_unref(reply);
+        return false;
+    }
+    DBusMessageIter iter;
+    const bool valid = dbus_message_iter_init(reply, &iter) &&
+                       dbus_message_iter_get_arg_type(&iter) == DBUS_TYPE_ARRAY;
+    if (dbus_error_is_set(&error)) dbus_error_free(&error);
+    dbus_message_unref(reply);
+    return valid;
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -139,6 +161,10 @@ int main(int argc, char** argv) {
 
     pid_t active_child = launch(argv[2], root / "active");
     ok &= expect(waitForOwner(connection, true, 5s), "active fixture did not acquire name");
+    ok &= expect(interfaceListMethodWorks(connection, "ListInterfaces"),
+                 "V1 ListInterfaces did not return an array");
+    ok &= expect(interfaceListMethodWorks(connection, "GetInterfaces"),
+                 "V1 GetInterfaces did not return an array");
     ok &= expect(degradedHealthVisible(connection), "degraded runtime health was not visible");
     ok &= expect(sendPing(connection), "could not queue active Ping request");
     std::this_thread::sleep_for(200ms);

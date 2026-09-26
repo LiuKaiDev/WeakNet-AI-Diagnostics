@@ -20,7 +20,6 @@
 #include "rssi_monitor.hpp"
 #include "rtt_monitor.hpp"
 #include "tcp_loss_monitor.hpp"
-#include "using_iface.h"
 #include "weak_netmgr.hpp"
 #include "weaknet/build_config.hpp"
 #include "v1_observation_adapter.hpp"
@@ -156,12 +155,6 @@ bool DaemonApplication::startWorkers() {
     };
 
     try {
-        launch("interfaces", [this](std::stop_token token) {
-            run_iface_monitor(&context_, token);
-        });
-        launch("uplink", [this](std::stop_token token) {
-            run_using_iface_monitor(&context_, token);
-        });
         launch("rtt", [this](std::stop_token token) {
             run_rtt_monitor(&context_, token, "223.5.5.5", 10000, 800);
         });
@@ -218,6 +211,16 @@ bool DaemonApplication::start() {
     v2_adapter_ = std::make_unique<v2::V1ObservationAdapter>(
         event_bus_, metric_store_, clock_, *netns);
     context_.v2_adapter = v2_adapter_.get();
+    topology_collector_ = std::make_unique<v2::NetlinkCollector>(event_bus_, clock_, *netns);
+    if (!topology_collector_->start()) {
+        health_.set("netlink_topology", RuntimeHealthState::Degraded, "initial_reconciliation_failed");
+        v2_adapter_->mirrorCollectorHealth("netlink_topology", v2::CollectorState::Degraded,
+                                           "initial_reconciliation_failed");
+    } else {
+        health_.set("netlink_topology", RuntimeHealthState::Running);
+        v2_adapter_->mirrorCollectorHealth("netlink_topology", v2::CollectorState::Running);
+    }
+    context_.topology = topology_collector_.get();
     health_.set("v2_data_plane", RuntimeHealthState::Running);
 
     if (test_hooks_.fail_required_step == "manager") {
@@ -225,8 +228,8 @@ bool DaemonApplication::start() {
         return false;
     }
     weak_mgr_ = std::make_unique<WeakNetMgr>();
+    weak_mgr_->setTopologyCollector(topology_collector_.get());
     WiFiRssiClient::getInstance()->setRuntimeDirectory(config_.runtime_dir.string());
-    UsingInterfaceManager::getInstance()->start();
     context_.weak_mgr = weak_mgr_.get();
     context_.running.store(true);
 
@@ -248,16 +251,6 @@ bool DaemonApplication::start() {
         }
         const auto interfaces = weak_mgr_->collectCurrentInterfaces();
         weak_mgr_->updateInterfaces(interfaces);
-        v2_adapter_->mirrorInterfaceSnapshot(interfaces);
-        std::string current_interface;
-        for (const auto& interface : interfaces) {
-            if (interface.usingNow()) {
-                current_interface = interface.ifName();
-                break;
-            }
-        }
-        v2_adapter_->mirrorUplink(
-            current_interface, UsingInterfaceManager::getInstance()->getMethodFlags());
         if (test_hooks_.seed_test_interface) {
             NetInfo test_interface("test0");
             test_interface.setUsingNow(true);
@@ -329,7 +322,6 @@ void DaemonApplication::stopWorkers() noexcept {
 
     try {
         if (weak_mgr_) weak_mgr_->stopTrafficAnalysis();
-        UsingInterfaceManager::getInstance()->stop();
         WiFiRssiClient::getInstance()->disconnect();
     } catch (...) {
     }
@@ -372,6 +364,8 @@ void DaemonApplication::stop() noexcept {
     if (stopped_.exchange(true)) return;
     requestStop();
     stopWorkers();
+    if (topology_collector_) topology_collector_->stop();
+    health_.set("netlink_topology", RuntimeHealthState::Stopped);
     if (event_monitoring_started_) {
         getEventManager().stopEventMonitoring();
         event_monitoring_started_ = false;
@@ -382,7 +376,9 @@ void DaemonApplication::stop() noexcept {
     weak_mgr_.reset();
     context_.weak_mgr = nullptr;
     context_.v2_adapter = nullptr;
+    context_.topology = nullptr;
     v2_adapter_.reset();
+    topology_collector_.reset();
     restoreSignalMask();
     health_.set("logger", RuntimeHealthState::Stopped);
     Logger::shutdown();

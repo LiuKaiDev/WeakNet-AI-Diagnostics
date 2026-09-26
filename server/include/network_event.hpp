@@ -59,6 +59,7 @@ enum class StatusCode : std::uint16_t {
     CounterReset,
     InvalidSchema,
     InvalidPayload,
+    PolicyEvidence,
 };
 
 struct Status {
@@ -68,6 +69,9 @@ struct Status {
 };
 
 enum class EventKind : std::uint8_t {
+    LinkObservation,
+    AddressObservation,
+    RouteObservation,
     InterfaceObservation,
     UplinkObservation,
     ProbeRttMetric,
@@ -78,6 +82,7 @@ enum class EventKind : std::uint8_t {
 };
 
 enum class EventSource : std::uint8_t {
+    NetlinkCollector,
     V1InterfaceSnapshot,
     V1UplinkMonitor,
     V1RttMonitor,
@@ -93,10 +98,38 @@ struct InterfaceObservation {
     bool link_up{false};
 };
 
+struct LinkObservation {
+    std::uint32_t ifindex{};
+    std::string interface_name;
+    bool present{true};
+    bool link_up{false};
+    bool carrier_up{false};
+};
+
+struct AddressObservation {
+    std::uint32_t ifindex{};
+    std::uint8_t family{};
+    std::uint8_t prefix_length{};
+    std::string address;
+    bool present{true};
+};
+
+struct RouteObservation {
+    std::uint8_t family{};
+    std::uint8_t prefix_length{};
+    std::uint32_t table{};
+    std::uint32_t priority{};
+    std::uint32_t output_ifindex{};
+    bool present{true};
+    bool multipath{false};
+    bool on_link{false};
+};
+
 struct UplinkObservation {
     std::string interface_name;
     std::uint32_t method_flags{};
     bool selected{false};
+    std::string evidence;
 };
 
 struct ProbeRttObservation { std::optional<double> milliseconds; };
@@ -126,7 +159,7 @@ struct CollectorHealthObservation {
 };
 
 using NetworkEventPayload = std::variant<
-    InterfaceObservation, UplinkObservation, ProbeRttObservation,
+    LinkObservation, AddressObservation, RouteObservation, InterfaceObservation, UplinkObservation, ProbeRttObservation,
     TcpLossObservation, TrafficObservation, WifiRssiObservation,
     CollectorHealthObservation>;
 

@@ -11,6 +11,7 @@
 
 #include "net_info.hpp"
 #include "traffic_analyzer.hpp"
+#include "netlink_collector.hpp"
 
 namespace weaknet_dbus {
 
@@ -22,6 +23,8 @@ private:
 
 public:
     WeakNetMgr() : iface_mutex_(), current_interfaces_() {}
+
+    void setTopologyCollector(v2::NetlinkCollector* collector) { topology_collector_ = collector; }
 
     // 从底层查询或外部模块同步当前具备上网能力的接口，返回 NetInfo 列表
     // 这里默认通过 NetInterfaceManager 获取接口名，再填充基本字段，后续可扩展 RTT 等
@@ -93,6 +96,11 @@ public:
     
     // 线程安全的当前使用接口更新
     bool updateCurrentUsingSafe();
+
+    v2::NetlinkCollector* topologyCollector() const { return topology_collector_; }
+
+private:
+    v2::NetlinkCollector* topology_collector_ = nullptr;
 };
 
 }  // namespace weaknet_dbus

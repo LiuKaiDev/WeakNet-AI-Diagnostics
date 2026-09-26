@@ -31,6 +31,17 @@ weaknet_add_cpp_test(v1_observation_adapter v1_observation_adapter_test.cpp)
 target_link_libraries(v1_observation_adapter PRIVATE weaknet_data_plane)
 set_tests_properties(v1_observation_adapter PROPERTIES LABELS "phase3;compatibility")
 
+weaknet_add_cpp_test(netlink_topology netlink_topology_test.cpp)
+target_link_libraries(netlink_topology PRIVATE weaknet_data_plane weaknet_server_core)
+set_tests_properties(netlink_topology PROPERTIES LABELS "phase4")
+
+weaknet_add_cpp_test(netlink_namespace_integration netlink_namespace_integration_test.cpp)
+target_link_libraries(netlink_namespace_integration PRIVATE weaknet_data_plane)
+set_tests_properties(netlink_namespace_integration PROPERTIES
+    LABELS "phase4;integration"
+    SKIP_RETURN_CODE 77
+    TIMEOUT 15)
+
 weaknet_add_cpp_test(ping_executor_lifecycle ping_executor_test.cpp)
 target_link_libraries(ping_executor_lifecycle PRIVATE weaknet_server_core)
 

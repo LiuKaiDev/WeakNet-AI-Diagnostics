@@ -115,7 +115,7 @@ void V1ObservationAdapter::mirrorUplink(const std::string& interface_name,
     bus_.publish(NetworkEvent(
         header(EventKind::UplinkObservation, EventSource::V1UplinkMonitor,
                validity, id, std::move(status), realtime, monotonic),
-        UplinkObservation{interface_name, method_flags, id.has_value()}));
+        UplinkObservation{interface_name, method_flags, id.has_value(), {}}));
 }
 
 void V1ObservationAdapter::mirrorRtt(const NetInfo& interface) {

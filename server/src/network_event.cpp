@@ -10,6 +10,9 @@ namespace weaknet_dbus::v2 {
 EventKind NetworkEvent::kindFor(const NetworkEventPayload& payload) noexcept {
     return std::visit([](const auto& value) {
         using T = std::decay_t<decltype(value)>;
+        if constexpr (std::is_same_v<T, LinkObservation>) return EventKind::LinkObservation;
+        if constexpr (std::is_same_v<T, AddressObservation>) return EventKind::AddressObservation;
+        if constexpr (std::is_same_v<T, RouteObservation>) return EventKind::RouteObservation;
         if constexpr (std::is_same_v<T, InterfaceObservation>) return EventKind::InterfaceObservation;
         if constexpr (std::is_same_v<T, UplinkObservation>) return EventKind::UplinkObservation;
         if constexpr (std::is_same_v<T, ProbeRttObservation>) return EventKind::ProbeRttMetric;
@@ -46,6 +49,9 @@ bool NetworkEvent::replaceable() const noexcept {
         case EventKind::TrafficMetric:
         case EventKind::WifiRssiMetric:
             return true;
+        case EventKind::LinkObservation:
+        case EventKind::AddressObservation:
+        case EventKind::RouteObservation:
         case EventKind::InterfaceObservation:
         case EventKind::UplinkObservation:
         case EventKind::CollectorHealth:

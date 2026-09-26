@@ -150,6 +150,8 @@ Tests:
 
 ## Phase 4: Netlink topology collector and uplink state
 
+Status: implementation is present in the current working tree as one active Phase 4 collector layered on the Phase 3 data plane; final acceptance remains evidence-gated because privileged namespace integration and TSan execution may be supported skips. V1 interface-list/current-uplink compatibility is backed by its reconciled snapshot; the old listener is no longer started. See `PHASE4_NETLINK.md` for exact parser, reconciliation, policy, and validation semantics.
+
 Objective: replace duplicated V1 route/link discovery with one correct collector.
 
 Scope:

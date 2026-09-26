@@ -16,6 +16,7 @@
 #include "event_bus.hpp"
 #include "metric_store.hpp"
 #include "v1_observation_adapter.hpp"
+#include "netlink_collector.hpp"
 
 namespace weaknet_dbus {
 
@@ -60,6 +61,7 @@ private:
     v2::EventBus event_bus_{1024};
     v2::MetricStore metric_store_{clock_};
     std::unique_ptr<v2::V1ObservationAdapter> v2_adapter_;
+    std::unique_ptr<v2::NetlinkCollector> topology_collector_;
     std::stop_source stop_source_;
     std::atomic<bool> started_{false};
     std::atomic<bool> stopped_{false};

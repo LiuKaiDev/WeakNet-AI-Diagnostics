@@ -19,8 +19,10 @@ Phase 1 through Phase 3 are now the implemented baseline. The top-level `CMakeLi
 - `network_event.hpp`, `event_bus.hpp`, `metric_store.hpp`, injected clocks, and `v1_observation_adapter.hpp` in the `weaknet_data_plane` target;
 - deterministic Phase 3 schema, saturation/concurrency, store retention, and V1 bridge tests;
 - exact Phase 3 semantics in `docs/PHASE3_DATA_PLANE.md`.
+- the Phase 4 `netlink_parser.hpp`, `netlink_topology.hpp`, and `netlink_collector.hpp` path with deterministic parser/policy tests;
+- exact Phase 4 semantics in `docs/PHASE4_NETLINK.md`.
 
-The later names `weaknetd` and `weaknetctl`, plus collector replacement, SocketTracker, IncidentEngine, and RootCauseEngine, remain target architecture and are not present yet. Read `server/src/application.cpp` after the Phase 1 targets, then read `docs/PHASE2_RUNTIME.md` and `docs/PHASE3_DATA_PLANE.md`; use later sections as the intended post-implementation order.
+The later names `weaknetd` and `weaknetctl`, plus SocketTracker, IncidentEngine, and RootCauseEngine, remain target architecture and are not present yet. Read `server/src/application.cpp` after the Phase 1 targets, then read `docs/PHASE2_RUNTIME.md`, `docs/PHASE3_DATA_PLANE.md`, and `docs/PHASE4_NETLINK.md`; use later sections as the intended post-implementation order.
 
 ## Prerequisites
 
