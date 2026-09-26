@@ -213,6 +213,8 @@ bool DaemonApplication::start() {
     context_.v2_adapter = v2_adapter_.get();
     incident_engine_ = std::make_unique<v2::IncidentEngine>(event_bus_, clock_);
     incident_engine_->start();
+    root_cause_engine_ = std::make_unique<v2::RootCauseEngine>(event_bus_, clock_);
+    root_cause_engine_->start();
     topology_collector_ = std::make_unique<v2::NetlinkCollector>(
         event_bus_, clock_, *netns, std::chrono::seconds(30),
         test_hooks_.netlink_collector);
@@ -400,6 +402,7 @@ void DaemonApplication::stop() noexcept {
     if (stopped_.exchange(true)) return;
     requestStop();
     stopWorkers();
+    if (root_cause_engine_) root_cause_engine_->stop();
     if (incident_engine_) incident_engine_->stop();
     if (socket_tracker_) socket_tracker_->stop();
     health_.set("socket_tracker", RuntimeHealthState::Stopped);
@@ -421,6 +424,7 @@ void DaemonApplication::stop() noexcept {
     socket_tracker_.reset();
     socket_route_attributor_.reset();
     incident_engine_.reset();
+    root_cause_engine_.reset();
     restoreSignalMask();
     health_.set("logger", RuntimeHealthState::Stopped);
     Logger::shutdown();

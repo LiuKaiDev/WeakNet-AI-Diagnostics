@@ -28,10 +28,11 @@ Phase 1 through Phase 3 are now the implemented baseline. The top-level `CMakeLi
 - exact Phase 5.1–5.4 semantics in `docs/PHASE5_SOCKET_TRACKER.md`, including
   committed-topology socket route attribution and its uncertainty model.
 
-The later names `weaknetd` and `weaknetctl`, plus RootCauseEngine, remain
-target architecture. SocketTracker now provides the Phase 5.3 TCP_INFO metric
-path and Phase 5.4 modeled route context. The first deterministic
-IncidentEngine stage is implemented; its incidents are not root causes and
+The later names `weaknetd` and `weaknetctl` remain target architecture.
+RootCauseEngine now provides the first bounded deterministic hypothesis stage.
+SocketTracker now provides the Phase 5.3 TCP_INFO metric path and Phase 5.4
+modeled route context. The first deterministic IncidentEngine stage is
+implemented; its incidents are not root causes and
 its route context is not a claim of kernel FIB/RPDB equivalence.
 Read `server/src/application.cpp` after the Phase 1 targets, then read
 `docs/PHASE2_RUNTIME.md`, `docs/PHASE3_DATA_PLANE.md`,

@@ -1,0 +1,102 @@
+#pragma once
+
+#include <cstddef>
+#include <cstdint>
+#include <atomic>
+#include <deque>
+#include <map>
+#include <mutex>
+#include <optional>
+#include <string>
+#include <vector>
+
+#include "clock.hpp"
+#include "event_bus.hpp"
+
+namespace weaknet_dbus::v2 {
+
+struct RootCausePolicy {
+    std::size_t max_recent_resolved{256};
+    std::size_t max_evidence_per_hypothesis{8};
+    std::size_t max_active_hypotheses{1024};
+};
+
+class RootCauseEngine {
+public:
+    RootCauseEngine(EventBus& bus, const Clock& clock, RootCausePolicy policy = {});
+    ~RootCauseEngine();
+
+    RootCauseEngine(const RootCauseEngine&) = delete;
+    RootCauseEngine& operator=(const RootCauseEngine&) = delete;
+
+    bool start();
+    void stop() noexcept;
+    bool running() const noexcept;
+
+    // Public deterministic entry point used by replay and unit tests.  The
+    // EventBus subscription calls this same function.
+    bool process(const NetworkEvent& event);
+    bool handle(const NetworkEvent& event) { return process(event); }
+
+    std::vector<RootCauseHypothesisObservation> listActiveHypotheses() const;
+    std::vector<RootCauseHypothesisObservation> activeHypotheses() const {
+        return listActiveHypotheses();
+    }
+    std::optional<RootCauseHypothesisObservation> getHypothesis(
+        RootCauseHypothesisId id) const;
+    std::vector<RootCauseHypothesisObservation> recentResolvedHypotheses() const;
+    const RootCausePolicy& policy() const noexcept { return policy_; }
+
+private:
+    struct CandidateKey {
+        RootCauseType type{RootCauseType::InsufficientEvidence};
+        RootCauseScope scope{NetnsId{}};
+        auto operator<=>(const CandidateKey&) const = default;
+    };
+
+    struct Candidate {
+        RootCauseHypothesisObservation observation;
+    };
+
+    using IncidentMap = std::map<IncidentId, IncidentObservation>;
+
+    static bool sameContent(const RootCauseHypothesisObservation& left,
+                            const RootCauseHypothesisObservation& right);
+    static bool hasIncident(const IncidentMap& incidents, IncidentType type,
+                            const RootCauseScope& scope);
+    static RootCauseScope incidentScope(const IncidentObservation& incident);
+    static bool scopeMatches(const IncidentScope& left, const RootCauseScope& right);
+    static RootCauseEvidenceKind evidenceKind(IncidentType type);
+
+    void addEvidence(std::vector<RootCauseEvidence>& destination,
+                     RootCauseEvidence evidence) const;
+    RootCauseEvidence incidentEvidence(const IncidentObservation& incident,
+                                       RootCauseEvidenceRole role,
+                                       RootCauseEvidenceKind kind) const;
+    RootCauseEvidence observationEvidence(const NetworkEvent& event,
+                                          RootCauseScope scope,
+                                          RootCauseEvidenceRole role,
+                                          RootCauseEvidenceKind kind,
+                                          RootCauseEvidenceCapability capability,
+                                          std::string provenance) const;
+    std::map<CandidateKey, Candidate> buildCandidatesLocked() const;
+    void reconcileLocked(RealtimeTime now,
+                         std::vector<RootCauseHypothesisObservation>& emissions);
+    void publish(const RootCauseHypothesisObservation& hypothesis);
+
+    EventBus& bus_;
+    const Clock& clock_;
+    RootCausePolicy policy_;
+    mutable std::mutex mutex_;
+    IncidentMap active_incidents_;
+    std::map<SocketId, NetworkEvent> route_events_;
+    std::map<NetnsId, NetworkEvent> uplink_events_;
+    std::map<CandidateKey, RootCauseHypothesisObservation> active_;
+    std::deque<RootCauseHypothesisObservation> resolved_;
+    std::uint64_t next_occurrence_{1};
+    EventBus::Subscription subscription_;
+    bool running_{false};
+    std::atomic<std::uint64_t> next_event_id_{1};
+};
+
+}  // namespace weaknet_dbus::v2

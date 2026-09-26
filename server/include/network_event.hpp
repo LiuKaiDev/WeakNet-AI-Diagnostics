@@ -9,6 +9,7 @@
 #include <stdexcept>
 #include <string>
 #include <variant>
+#include <type_traits>
 
 #include "clock.hpp"
 
@@ -131,6 +132,7 @@ enum class EventKind : std::uint8_t {
     TcpIntervalMetric,
     SocketRouteObservation,
     IncidentObservation,
+    RootCauseHypothesisObservation,
 };
 
 enum class EventSource : std::uint8_t {
@@ -144,6 +146,7 @@ enum class EventSource : std::uint8_t {
     Runtime,
     SocketTracker,
     IncidentEngine,
+    RootCauseEngine,
 };
 
 enum class SocketLifecycleState : std::uint8_t {
@@ -400,6 +403,96 @@ struct IncidentObservation {
     EventSource source{EventSource::IncidentEngine};
 };
 
+enum class RootCauseType : std::uint8_t {
+    UplinkAvailabilityProblem,
+    LocalRoutingProblem,
+    NetworkPathDegradation,
+    RemoteOrUpstreamDegradation,
+    LocalLinkSuspected,
+    InsufficientEvidence,
+};
+
+using RootCauseScope = std::variant<SocketId, InterfaceId, NetnsId>;
+
+struct RootCauseHypothesisId {
+    RootCauseType type{RootCauseType::InsufficientEvidence};
+    RootCauseScope scope{NetnsId{}};
+    std::uint64_t occurrence{};
+    auto operator<=>(const RootCauseHypothesisId&) const = default;
+};
+
+enum class HypothesisState : std::uint8_t { Active, Resolved };
+enum class HypothesisConfidence : std::uint8_t { Low, Medium, High };
+enum class RootCauseEvidenceRole : std::uint8_t { Supporting, Contradicting, Missing };
+
+enum class RootCauseEvidenceKind : std::uint8_t {
+    ActiveIncident,
+    AuthoritativeNoUsableUplink,
+    AuthoritativeRouteUnavailable,
+    SocketRouteConflict,
+    ModeledRouteAvailable,
+    UsableUplinkAvailable,
+    HighTcpRtt,
+    ElevatedTcpRetransmission,
+    GatewayProbeUnavailable,
+    RemoteProbeUnavailable,
+    GatewayLatencyUnavailable,
+    WifiLinkQualityUnavailable,
+    ActiveRemoteProbeUnavailable,
+    PolicyRoutingStateUnavailable,
+    IpRuleNotModeled,
+    VrfStateUnavailable,
+    TopologyUnavailable,
+    AttributionAmbiguous,
+};
+
+enum class RootCauseEvidenceUnit : std::uint8_t {
+    None,
+    Microseconds,
+    Ratio,
+    Count,
+};
+
+enum class RootCauseEvidenceCapability : std::uint8_t {
+    Available,
+    Unavailable,
+    NotImplemented,
+};
+
+struct RootCauseEvidence {
+    std::optional<IncidentId> incident;
+    EventKind source_kind{EventKind::CollectorHealth};
+    EventSource source{EventSource::Runtime};
+    RootCauseScope scope{NetnsId{}};
+    RealtimeTime observed_at{};
+    MonotonicTime monotonic_at{};
+    RootCauseEvidenceRole role{RootCauseEvidenceRole::Supporting};
+    RootCauseEvidenceKind kind{RootCauseEvidenceKind::ActiveIncident};
+    std::optional<IncidentEvidenceValue> value;
+    RootCauseEvidenceUnit unit{RootCauseEvidenceUnit::None};
+    Validity validity{Validity::Unavailable};
+    RootCauseEvidenceCapability capability{RootCauseEvidenceCapability::Available};
+    std::string provenance;
+    auto operator<=>(const RootCauseEvidence&) const = default;
+};
+
+struct RootCauseHypothesisObservation {
+    RootCauseHypothesisId id;
+    RootCauseType type{RootCauseType::InsufficientEvidence};
+    RootCauseScope scope{NetnsId{}};
+    HypothesisState state{HypothesisState::Active};
+    HypothesisConfidence confidence{HypothesisConfidence::Low};
+    RealtimeTime opened_at{};
+    RealtimeTime last_updated_at{};
+    std::optional<RealtimeTime> resolved_at;
+    std::vector<RootCauseEvidence> supporting_evidence;
+    std::vector<RootCauseEvidence> contradicting_evidence;
+    std::vector<RootCauseEvidence> missing_evidence;
+    std::string reason_code;
+    EventSource provenance{EventSource::RootCauseEngine};
+    auto operator<=>(const RootCauseHypothesisObservation&) const = default;
+};
+
 using TcpObservation = TcpInfoObservation;
 using TcpIntervalObservation = TcpIntervalMetrics;
 
@@ -473,7 +566,8 @@ using NetworkEventPayload = std::variant<
     LinkObservation, AddressObservation, RouteObservation, InterfaceObservation, UplinkObservation, ProbeRttObservation,
     TcpLossObservation, TrafficObservation, WifiRssiObservation,
     CollectorHealthObservation, SocketObservation, TcpInfoObservation,
-    TcpIntervalMetrics, SocketRouteContextObservation, IncidentObservation>;
+    TcpIntervalMetrics, SocketRouteContextObservation, IncidentObservation,
+    RootCauseHypothesisObservation>;
 
 struct NetworkEventHeader {
     std::uint16_t schema_version{kNetworkEventSchemaVersion};
@@ -541,5 +635,22 @@ template <> struct std::hash<weaknet_dbus::v2::SocketId> {
 template <> struct std::hash<weaknet_dbus::v2::IncidentId> {
     std::size_t operator()(weaknet_dbus::v2::IncidentId id) const noexcept {
         return std::hash<std::uint64_t>{}(id.value);
+    }
+};
+template <> struct std::hash<weaknet_dbus::v2::RootCauseHypothesisId> {
+    std::size_t operator()(const weaknet_dbus::v2::RootCauseHypothesisId& id) const noexcept {
+        std::size_t result = std::hash<std::uint8_t>{}(static_cast<std::uint8_t>(id.type));
+        std::visit([&](const auto& scope) {
+            using Scope = std::decay_t<decltype(scope)>;
+            std::size_t value = 0;
+            if constexpr (std::is_same_v<Scope, weaknet_dbus::v2::SocketId>)
+                value = std::hash<weaknet_dbus::v2::SocketId>{}(scope);
+            else if constexpr (std::is_same_v<Scope, weaknet_dbus::v2::InterfaceId>)
+                value = std::hash<weaknet_dbus::v2::InterfaceId>{}(scope);
+            else value = std::hash<weaknet_dbus::v2::NetnsId>{}(scope);
+            result ^= value + 0x9e3779b9U + (result << 6U) + (result >> 2U);
+        }, id.scope);
+        return result ^ (std::hash<std::uint64_t>{}(id.occurrence) +
+                         0x9e3779b9U + (result << 6U) + (result >> 2U));
     }
 };

@@ -299,7 +299,8 @@ Tests:
 ## Phase 8: IncidentEngine
 
 Status: the first deterministic detection/lifecycle stage is implemented in
-the current working tree. Root-cause correlation remains deferred to Phase 9.
+the current working tree. Root-cause correlation is documented and implemented
+as the bounded first stage of Phase 9.
 
 Objective: turn valid event/metric windows into deterministic incident lifecycles.
 
@@ -336,7 +337,12 @@ Tests:
 
 ## Phase 9: RootCauseEngine
 
-Objective: produce explainable ranked cause candidates entirely in C++.
+Status: the first bounded deterministic stage is implemented in the current
+working tree. It covers the initial typed hypothesis catalog and consumes
+IncidentEngine plus existing route/uplink evidence. Broader probe, Wi-Fi,
+collector-health correlation and replay tooling remain future work.
+
+Objective: produce explainable evidence-backed cause candidates entirely in C++.
 
 Scope:
 
