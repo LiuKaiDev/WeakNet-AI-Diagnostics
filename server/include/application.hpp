@@ -17,6 +17,7 @@
 #include "metric_store.hpp"
 #include "v1_observation_adapter.hpp"
 #include "netlink_collector.hpp"
+#include "socket_tracker.hpp"
 
 namespace weaknet_dbus {
 
@@ -27,6 +28,7 @@ struct ApplicationTestHooks {
     std::function<int(std::stop_token, const std::string&, const std::string&, int)>
         ping_operation;
     v2::NetlinkCollectorTestHooks netlink_collector;
+    v2::SocketTrackerTestHooks socket_tracker;
 };
 
 class DaemonApplication {
@@ -63,6 +65,7 @@ private:
     v2::MetricStore metric_store_{clock_};
     std::unique_ptr<v2::V1ObservationAdapter> v2_adapter_;
     std::unique_ptr<v2::NetlinkCollector> topology_collector_;
+    std::unique_ptr<v2::SocketTracker> socket_tracker_;
     std::stop_source stop_source_;
     std::atomic<bool> started_{false};
     std::atomic<bool> stopped_{false};

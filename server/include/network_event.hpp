@@ -49,6 +49,12 @@ enum class SocketProtocol : std::uint8_t {
     Tcp = 6,
 };
 
+struct TcpSocketState {
+    std::uint8_t raw{};
+    bool known() const noexcept { return raw >= 1 && raw <= 12; }
+    auto operator<=>(const TcpSocketState&) const = default;
+};
+
 struct SocketEndpoint {
     std::uint8_t family{};
     std::array<std::uint8_t, 16> address{};
@@ -150,6 +156,8 @@ struct SocketObservation {
     Validity validity{Validity::Valid};
     SocketLifecycleState lifecycle{SocketLifecycleState::Active};
     bool present{true};
+    TcpSocketState tcp_state{};
+    std::optional<std::uint32_t> diag_ifindex;
 };
 
 struct InterfaceObservation {

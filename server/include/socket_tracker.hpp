@@ -6,9 +6,20 @@
 #include <map>
 #include <optional>
 #include <set>
+#include <atomic>
+#include <chrono>
+#include <functional>
+#include <mutex>
+#include <stop_token>
+#include <string>
+#include <thread>
 #include <vector>
 
 #include "network_event.hpp"
+#include "socket_diag_parser.hpp"
+#include "event_bus.hpp"
+#include "clock.hpp"
+#include "scoped_fd.hpp"
 
 namespace weaknet_dbus::v2 {
 
@@ -26,6 +37,8 @@ struct SocketObservationInput {
     EventSource source{EventSource::SocketTracker};
     Validity validity{Validity::Valid};
     bool present{true};
+    TcpSocketState tcp_state{};
+    std::optional<std::uint32_t> diag_ifindex;
 };
 
 struct SocketResolution {
@@ -98,6 +111,75 @@ private:
     std::map<CookieKey, SocketId> pending_cookie_;
     std::set<SocketId> pending_seen_;
     std::set<SocketId> pending_superseded_;
+};
+
+struct SocketTrackerTelemetry {
+    std::uint64_t reconciliation_attempts{};
+    std::uint64_t reconciliation_successes{};
+    std::uint64_t reconciliation_failures{};
+    std::uint64_t timeouts{};
+    std::uint64_t truncations{};
+    std::uint64_t interrupted_dumps{};
+    std::uint64_t netlink_errors{};
+    std::uint64_t overflow_events{};
+    std::uint64_t malformed_messages{};
+    std::uint64_t parsed_socket_count{};
+    std::uint64_t authoritative_commits{};
+    std::uint64_t capacity_exhaustions{};
+    std::size_t active_socket_count{};
+    bool degraded{false};
+    std::string last_error;
+    std::optional<RealtimeTime> last_successful_reconciliation;
+};
+
+struct SocketTrackerTestHooks {
+    std::function<int()> open_socket;
+    std::function<std::optional<std::vector<SocketDiagRecord>>(std::uint8_t, std::stop_token)> dump;
+    std::chrono::milliseconds recovery_retry_initial{std::chrono::milliseconds(250)};
+    std::chrono::milliseconds recovery_retry_max{std::chrono::seconds(5)};
+};
+
+class SocketTracker {
+public:
+    static constexpr auto kInventoryInterval = std::chrono::seconds(5);
+    SocketTracker(EventBus& bus, const Clock& clock, NetnsId netns,
+                  SocketLifecycleConfig lifecycle_config = {},
+                  std::chrono::milliseconds interval = kInventoryInterval,
+                  SocketTrackerTestHooks hooks = {});
+    ~SocketTracker();
+    SocketTracker(const SocketTracker&) = delete;
+    SocketTracker& operator=(const SocketTracker&) = delete;
+    bool start();
+    void stop() noexcept;
+    bool running() const noexcept { return running_.load(); }
+    std::vector<SocketObservation> active() const;
+    SocketTrackerTelemetry telemetry() const;
+    bool reconcileForTests();
+
+private:
+    bool openSocket();
+    bool reconcile(std::stop_token token);
+    bool dumpFamily(std::uint8_t family, std::vector<SocketDiagRecord>& output,
+                    std::stop_token token);
+    void loop(std::stop_token token);
+    void markFailure(const std::string& reason);
+    void publishCommitted(const std::vector<SocketObservation>& before,
+                          const std::vector<SocketObservation>& after,
+                          const std::vector<SocketObservation>& closed);
+
+    EventBus& bus_;
+    const Clock& clock_;
+    NetnsId netns_;
+    SocketLifecycleTable lifecycle_;
+    std::chrono::milliseconds interval_;
+    SocketTrackerTestHooks hooks_;
+    mutable std::mutex mutex_;
+    mutable std::mutex lifecycle_mutex_;
+    SocketTrackerTelemetry telemetry_;
+    std::jthread worker_;
+    std::atomic<bool> running_{false};
+    ::weaknet_dbus::ScopedFd socket_;
+    std::atomic<std::uint64_t> next_event_id_{1};
 };
 
 }  // namespace weaknet_dbus::v2

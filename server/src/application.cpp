@@ -231,6 +231,24 @@ bool DaemonApplication::start() {
     context_.topology = topology_collector_.get();
     health_.set("v2_data_plane", RuntimeHealthState::Running);
 
+    socket_tracker_ = std::make_unique<v2::SocketTracker>(
+        event_bus_, clock_, *netns, v2::SocketLifecycleConfig{},
+        v2::SocketTracker::kInventoryInterval, test_hooks_.socket_tracker);
+    if (!socket_tracker_->start()) {
+        health_.set("socket_tracker", RuntimeHealthState::Degraded,
+                    "transport_or_worker_start_failed");
+        v2_adapter_->mirrorCollectorHealth("socket_tracker", v2::CollectorState::Degraded,
+                                           "transport_or_worker_start_failed");
+    } else if (socket_tracker_->telemetry().degraded) {
+        health_.set("socket_tracker", RuntimeHealthState::Degraded,
+                    "initial_reconciliation_failed");
+        v2_adapter_->mirrorCollectorHealth("socket_tracker", v2::CollectorState::Degraded,
+                                           "initial_reconciliation_failed");
+    } else {
+        health_.set("socket_tracker", RuntimeHealthState::Running);
+        v2_adapter_->mirrorCollectorHealth("socket_tracker", v2::CollectorState::Running);
+    }
+
     if (test_hooks_.fail_required_step == "manager") {
         stop();
         return false;
@@ -372,6 +390,8 @@ void DaemonApplication::stop() noexcept {
     if (stopped_.exchange(true)) return;
     requestStop();
     stopWorkers();
+    if (socket_tracker_) socket_tracker_->stop();
+    health_.set("socket_tracker", RuntimeHealthState::Stopped);
     if (topology_collector_) topology_collector_->stop();
     health_.set("netlink_topology", RuntimeHealthState::Stopped);
     if (event_monitoring_started_) {
@@ -387,6 +407,7 @@ void DaemonApplication::stop() noexcept {
     context_.topology = nullptr;
     v2_adapter_.reset();
     topology_collector_.reset();
+    socket_tracker_.reset();
     restoreSignalMask();
     health_.set("logger", RuntimeHealthState::Stopped);
     Logger::shutdown();

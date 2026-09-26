@@ -21,12 +21,14 @@ Phase 1 through Phase 3 are now the implemented baseline. The top-level `CMakeLi
 - exact Phase 3 semantics in `docs/PHASE3_DATA_PLANE.md`.
 - the Phase 4 `netlink_parser.hpp`, `netlink_topology.hpp`, and `netlink_collector.hpp` path with deterministic parser/policy tests;
 - exact Phase 4 semantics in `docs/PHASE4_NETLINK.md`.
-- the Phase 5.1 model-only `socket_tracker.hpp`/`socket_tracker.cpp` path with deterministic identity and lifecycle tests;
+- the Phase 5.1/5.2 `socket_tracker.hpp`/`socket_tracker.cpp` and
+  `socket_diag_parser.hpp` path with deterministic identity, lifecycle, and
+  NETLINK_SOCK_DIAG inventory semantics;
 - exact Phase 5.1 semantics in `docs/PHASE5_SOCKET_TRACKER.md`.
 
-The later names `weaknetd` and `weaknetctl`, plus the live SocketTracker,
-IncidentEngine, and RootCauseEngine, remain target architecture and are not
-present yet. The Phase 5.1 identity/lifecycle model is documented separately.
+The later names `weaknetd` and `weaknetctl`, plus IncidentEngine and
+RootCauseEngine, remain target architecture. SocketTracker now provides the
+Phase 5.2 inventory path, while TCP_INFO metrics remain deferred.
 Read `server/src/application.cpp` after the Phase 1 targets, then read
 `docs/PHASE2_RUNTIME.md`, `docs/PHASE3_DATA_PLANE.md`,
 `docs/PHASE4_NETLINK.md`, and `docs/PHASE5_SOCKET_TRACKER.md`; use later

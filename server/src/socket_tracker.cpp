@@ -1,8 +1,22 @@
 #include "socket_tracker.hpp"
 
 #include <algorithm>
+#include <array>
+#include <cstring>
 #include <limits>
 #include <stdexcept>
+
+#if defined(__linux__)
+#include <cerrno>
+#include <fcntl.h>
+#include <linux/inet_diag.h>
+#include <linux/netlink.h>
+#include <linux/sock_diag.h>
+#include <netinet/in.h>
+#include <poll.h>
+#include <sys/socket.h>
+#include <unistd.h>
+#endif
 
 namespace weaknet_dbus::v2 {
 
@@ -36,7 +50,266 @@ SocketId SocketLifecycleTable::newIdentity(
 SocketObservation SocketLifecycleTable::makeObservation(
     const SocketId& id, const SocketObservationInput& input) const {
     return SocketObservation{id, input.tuple.netns, input.tuple, input.observed_at, input.monotonic_at,
-                             input.source, input.validity, SocketLifecycleState::Active, true};
+                             input.source, input.validity, SocketLifecycleState::Active, true,
+                             input.tcp_state, input.diag_ifindex};
+}
+
+SocketTracker::SocketTracker(EventBus& bus, const Clock& clock, NetnsId netns,
+                             SocketLifecycleConfig lifecycle_config,
+                             std::chrono::milliseconds interval,
+                             SocketTrackerTestHooks hooks)
+    : bus_(bus), clock_(clock), netns_(netns), lifecycle_(lifecycle_config),
+      interval_(interval), hooks_(std::move(hooks)) {
+    if (netns_.inode == 0 || interval_ <= std::chrono::milliseconds::zero() ||
+        hooks_.recovery_retry_initial <= std::chrono::milliseconds::zero() ||
+        hooks_.recovery_retry_max < hooks_.recovery_retry_initial) {
+        throw std::invalid_argument("SocketTracker requires valid namespace and bounded intervals");
+    }
+}
+
+SocketTracker::~SocketTracker() { stop(); }
+
+bool SocketTracker::openSocket() {
+#if defined(__linux__)
+    if (hooks_.open_socket) {
+        const auto fd = hooks_.open_socket();
+        if (fd < 0) return false;
+        socket_.reset(fd);
+        return true;
+    }
+    const auto fd = ::socket(AF_NETLINK, SOCK_RAW | SOCK_CLOEXEC, NETLINK_SOCK_DIAG);
+    if (fd < 0) return false;
+    int receive_buffer = 1024 * 1024;
+    if (::setsockopt(fd, SOL_SOCKET, SO_RCVBUF, &receive_buffer, sizeof(receive_buffer)) != 0) {
+        ::close(fd); return false;
+    }
+    sockaddr_nl address{}; address.nl_family = AF_NETLINK;
+    if (::bind(fd, reinterpret_cast<sockaddr*>(&address), sizeof(address)) != 0) {
+        ::close(fd); return false;
+    }
+    const auto flags = ::fcntl(fd, F_GETFL, 0);
+    if (flags < 0 || ::fcntl(fd, F_SETFL, flags | O_NONBLOCK) != 0) {
+        ::close(fd); return false;
+    }
+    socket_.reset(fd);
+    return true;
+#else
+    return false;
+#endif
+}
+
+void SocketTracker::markFailure(const std::string& reason) {
+    std::lock_guard lock(mutex_);
+    ++telemetry_.reconciliation_failures;
+    telemetry_.degraded = true;
+    telemetry_.last_error = reason;
+}
+
+bool SocketTracker::dumpFamily(std::uint8_t family, std::vector<SocketDiagRecord>& output,
+                               std::stop_token token) {
+    if (hooks_.dump) {
+        const auto result = hooks_.dump(family, token);
+        if (!result) return false;
+        output.insert(output.end(), result->begin(), result->end());
+        return true;
+    }
+#if defined(__linux__)
+    const auto fd = socket_.get();
+    if (fd < 0) return false;
+    static std::atomic<std::uint32_t> sequence{1000};
+    const auto request_sequence = sequence.fetch_add(1);
+    inet_diag_req_v2 request{};
+    request.sdiag_family = family;
+    request.sdiag_protocol = IPPROTO_TCP;
+    request.idiag_states = 0xffffffffU;
+    nlmsghdr header{};
+    header.nlmsg_len = NLMSG_LENGTH(sizeof(request));
+    header.nlmsg_type = SOCK_DIAG_BY_FAMILY;
+    header.nlmsg_flags = NLM_F_REQUEST | NLM_F_DUMP;
+    header.nlmsg_seq = request_sequence;
+    std::array<std::byte, NLMSG_SPACE(sizeof(request))> wire{};
+    std::memcpy(wire.data(), &header, sizeof(header));
+    std::memcpy(wire.data() + NLMSG_HDRLEN, &request, sizeof(request));
+    sockaddr_nl destination{}; destination.nl_family = AF_NETLINK;
+    iovec vector{wire.data(), header.nlmsg_len};
+    msghdr message{}; message.msg_name = &destination; message.msg_namelen = sizeof(destination);
+    message.msg_iov = &vector; message.msg_iovlen = 1;
+    if (::sendmsg(fd, &message, 0) < 0) return false;
+    std::array<std::byte, 256 * 1024> buffer{};
+    const auto deadline = clock_.monotonicNow() + std::chrono::seconds(5);
+    bool complete = false;
+    while (!complete && !token.stop_requested()) {
+        if (clock_.monotonicNow() >= deadline) {
+            std::lock_guard lock(mutex_); ++telemetry_.timeouts; return false;
+        }
+        pollfd descriptor{fd, POLLIN, 0};
+        const auto ready = ::poll(&descriptor, 1, 100);
+        if (ready < 0) { if (errno == EINTR) continue; return false; }
+        if (ready == 0) continue;
+        sockaddr_nl sender{}; iovec receive_vector{buffer.data(), buffer.size()};
+        msghdr receive{}; receive.msg_name = &sender; receive.msg_namelen = sizeof(sender);
+        receive.msg_iov = &receive_vector; receive.msg_iovlen = 1;
+        const auto length = ::recvmsg(fd, &receive, MSG_DONTWAIT);
+        if (length < 0) {
+            if (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK) continue;
+            if (errno == ENOBUFS) { std::lock_guard lock(mutex_); ++telemetry_.overflow_events; }
+            return false;
+        }
+        if ((receive.msg_flags & MSG_TRUNC) != 0) {
+            std::lock_guard lock(mutex_); ++telemetry_.truncations; return false;
+        }
+        const auto parsed = SocketDiagParser::parse(buffer.data(), static_cast<std::size_t>(length),
+                                                    sender.nl_pid, request_sequence, netns_);
+        if (parsed.malformed || parsed.dump_interrupted) {
+            std::lock_guard lock(mutex_);
+            if (parsed.dump_interrupted) ++telemetry_.interrupted_dumps;
+            else ++telemetry_.malformed_messages;
+            return false;
+        }
+        for (const auto& item : parsed.messages) {
+            if (item.kind == SocketDiagMessageKind::Error) {
+                if (item.error_code != 0) { std::lock_guard lock(mutex_); ++telemetry_.netlink_errors; return false; }
+            } else if (item.kind == SocketDiagMessageKind::Socket && item.socket) {
+                output.push_back(*item.socket);
+            } else if (item.kind == SocketDiagMessageKind::Done) {
+                if (item.dump_interrupted) { std::lock_guard lock(mutex_); ++telemetry_.interrupted_dumps; return false; }
+                complete = true;
+            }
+        }
+    }
+    return complete;
+#else
+    (void)family; (void)output; (void)token; return false;
+#endif
+}
+
+bool SocketTracker::reconcile(std::stop_token token) {
+    {
+        std::lock_guard lock(mutex_);
+        ++telemetry_.reconciliation_attempts;
+    }
+    std::vector<SocketDiagRecord> records;
+    if (!dumpFamily(AF_INET, records, token) || !dumpFamily(AF_INET6, records, token)) {
+        markFailure("socket_dump_failed");
+        return false;
+    }
+    std::vector<SocketObservation> before;
+    std::vector<SocketObservation> after;
+    {
+        std::lock_guard lifecycle_lock(lifecycle_mutex_);
+        before = lifecycle_.active();
+        if (!lifecycle_.beginSnapshot(SocketSnapshotDisposition::Authoritative)) {
+            markFailure("snapshot_already_in_progress"); return false;
+        }
+        bool accepted = true;
+        for (const auto& record : records) {
+            SocketObservationInput input;
+            input.tuple = record.tuple; input.cookie = record.cookie;
+            input.observed_at = clock_.realtimeNow(); input.monotonic_at = clock_.monotonicNow();
+            input.tcp_state = record.tcp_state; input.diag_ifindex = record.diag_ifindex;
+            if (!lifecycle_.observe(input)) { accepted = false; break; }
+        }
+        if (!accepted) {
+            lifecycle_.abortSnapshot();
+            { std::lock_guard lock(mutex_); ++telemetry_.capacity_exhaustions; }
+            markFailure("active_capacity_exhausted");
+            return false;
+        }
+        if (!lifecycle_.commitSnapshot()) { markFailure("snapshot_commit_failed"); return false; }
+        after = lifecycle_.active();
+    }
+    std::vector<SocketObservation> closed;
+    for (const auto& item : before) {
+        const auto found = std::find_if(after.begin(), after.end(), [&](const auto& value) { return value.id == item.id; });
+        if (found == after.end()) {
+            auto copy = item;
+            copy.observed_at = clock_.realtimeNow();
+            copy.monotonic_at = clock_.monotonicNow();
+            copy.lifecycle = SocketLifecycleState::Closed;
+            copy.present = false;
+            copy.validity = Validity::Stale;
+            closed.push_back(std::move(copy));
+        }
+    }
+    publishCommitted(before, after, closed);
+    {
+        std::lock_guard lock(mutex_);
+        ++telemetry_.reconciliation_successes; ++telemetry_.authoritative_commits;
+        telemetry_.parsed_socket_count += records.size(); telemetry_.active_socket_count = after.size();
+        telemetry_.degraded = false; telemetry_.last_error.clear();
+        telemetry_.last_successful_reconciliation = clock_.realtimeNow();
+    }
+    return true;
+}
+
+void SocketTracker::publishCommitted(const std::vector<SocketObservation>& before,
+                                     const std::vector<SocketObservation>& after,
+                                     const std::vector<SocketObservation>& closed) {
+    auto changed = [&](const SocketObservation& value) {
+        const auto found = std::find_if(before.begin(), before.end(), [&](const auto& old) { return old.id == value.id; });
+        return found == before.end() || found->tuple != value.tuple || found->tcp_state != value.tcp_state ||
+               found->diag_ifindex != value.diag_ifindex;
+    };
+    auto publish = [&](const SocketObservation& value) {
+        NetworkEventHeader header{kNetworkEventSchemaVersion,
+            EventId{next_event_id_.fetch_add(1)}, {}, EventKind::SocketObservation,
+            EventSource::SocketTracker, value.observed_at, value.monotonic_at,
+            value.netns, std::nullopt, value.id, value.validity, std::nullopt};
+        (void)bus_.publish(NetworkEvent(std::move(header), value));
+    };
+    for (const auto& item : after) if (changed(item)) publish(item);
+    for (const auto& item : closed) publish(item);
+}
+
+bool SocketTracker::start() {
+    if (running_.exchange(true)) return true;
+    if (!openSocket()) {
+        running_.store(false);
+        std::lock_guard lock(mutex_);
+        telemetry_.degraded = true;
+        telemetry_.last_error = "transport_open_failed";
+        return false;
+    }
+    (void)reconcile({});
+    try { worker_ = std::jthread([this](std::stop_token token) { loop(token); }); }
+    catch (...) {
+        running_.store(false); socket_.reset();
+        return false;
+    }
+    return true;
+}
+
+void SocketTracker::loop(std::stop_token token) {
+    auto retry = hooks_.recovery_retry_initial;
+    while (!token.stop_requested()) {
+        const auto degraded = telemetry().degraded;
+        const auto delay = degraded ? retry : interval_;
+        for (auto elapsed = std::chrono::milliseconds::zero(); elapsed < delay && !token.stop_requested(); elapsed += std::chrono::milliseconds(50))
+            std::this_thread::sleep_for(std::min(std::chrono::milliseconds(50), delay - elapsed));
+        if (token.stop_requested()) break;
+        if (reconcile(token)) retry = hooks_.recovery_retry_initial;
+        else retry = std::min(hooks_.recovery_retry_max, retry * 2);
+    }
+}
+
+void SocketTracker::stop() noexcept {
+    if (!running_.exchange(false)) return;
+    if (worker_.joinable()) { worker_.request_stop(); worker_.join(); }
+    socket_.reset();
+}
+
+std::vector<SocketObservation> SocketTracker::active() const {
+    std::lock_guard lock(lifecycle_mutex_);
+    return lifecycle_.active();
+}
+
+bool SocketTracker::reconcileForTests() { return reconcile({}); }
+
+SocketTrackerTelemetry SocketTracker::telemetry() const {
+    SocketTrackerTelemetry result;
+    { std::lock_guard lock(mutex_); result = telemetry_; }
+    { std::lock_guard lifecycle_lock(lifecycle_mutex_); result.active_socket_count = lifecycle_.activeCount(); }
+    return result;
 }
 
 bool SocketLifecycleTable::beginSnapshot(SocketSnapshotDisposition disposition) {

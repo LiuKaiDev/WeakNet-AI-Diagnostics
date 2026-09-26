@@ -182,10 +182,11 @@ Tests:
 
 ## Phase 5: SocketTracker and trustworthy TCP metrics
 
-Status: Phase 5.1 is implemented as a model-only increment. Socket identity,
-cookie/tuple semantics, bounded lifecycle reconciliation, and typed socket
-observations are present; no sock_diag transport, TCP_INFO sampling, or
-interval metrics are implemented. Phase 5.2+ remains separately authorized.
+Status: Phase 5.1 and the authorized Phase 5.2 inventory increment are
+implemented. Socket identity, cookie/tuple semantics, bounded lifecycle
+reconciliation, and transactional IPv4+IPv6 NETLINK_SOCK_DIAG snapshots are
+present; TCP_INFO sampling and interval metrics are not implemented. TCP state
+and `idiag_if` remain metadata, not metric or routed-egress attribution.
 
 Objective: turn existing sock_diag/TCP_INFO inspection into stable per-socket observability.
 

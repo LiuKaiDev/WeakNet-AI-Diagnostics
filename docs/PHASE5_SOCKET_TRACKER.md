@@ -1,6 +1,6 @@
-# Phase 5.1 socket identity and lifecycle model
+# Phase 5.1/5.2 socket identity, lifecycle, and inventory
 
-## Scope
+## Phase 5.1 scope
 
 Phase 5.1 defines the in-process V2 data model used by future socket
 observation work. It does not open `NETLINK_SOCK_DIAG`, request `TCP_INFO`,
@@ -75,14 +75,42 @@ discarded oldest-first once the history bound is reached. No persistent cache or
 global singleton is used.
 
 `SocketObservation` is an additive Phase 3 event payload containing the resolved
-`SocketId`, tuple, namespace, timestamps, source, validity, and minimal
-active/closed lifecycle state. Phase 5.1 emits no live socket events because no
-live collector exists yet; it only establishes the copyable typed payload for
-future `SocketTracker` integration.
+`SocketId`, tuple, namespace, timestamps, source, validity, TCP-state metadata,
+and minimal active/closed lifecycle state. Phase 5.1 alone emits no live socket
+events; Phase 5.2 publishes only committed authoritative changes.
+
+## Phase 5.2 NETLINK_SOCK_DIAG inventory
+
+`SocketTracker` owns one nonblocking `AF_NETLINK`/`NETLINK_SOCK_DIAG` socket in
+the daemon's current network namespace. It requests all TCP states for both
+IPv4 and IPv6 and validates kernel sender PID 0, request sequence, multipart
+completion, errors, truncation, interruption, and bounded receive deadlines.
+`EAGAIN` is only a wait condition and never an empty-table result.
+
+`SocketDiagParser` extracts binary endpoints, network-order ports, Linux TCP
+state, `idiag_if`, and the two-word kernel cookie. Linux stores the native
+low 32 bits in word 0 and high 32 bits in word 1, so they are combined as
+`word0 | (word1 << 32)` without byte-order conversion. Two
+`INET_DIAG_NOCOOKIE` words mean unavailable while
+zero remains valid. Unknown attributes are ignored; malformed known attributes
+reject the candidate. TCP state is metadata only. `idiag_if` is retained as
+`diag_ifindex` evidence, not routed egress or selected uplink attribution.
+
+IPv4 and IPv6 dumps are transactional: both must complete before observations
+are passed to the lifecycle table and committed as one authoritative snapshot.
+Failure or partial visibility aborts the candidate and preserves the
+last-known-good active state. Events are emitted only after commit. Startup
+transport failure is degraded but optional to the daemon; post-start dump
+failures keep the worker alive and use bounded recovery backoff. Active
+capacity exhaustion rejects the entire candidate rather than committing a
+partial table. The one socket observes only its creation namespace; traversal
+of other namespaces is future work. Inventory cadence is five seconds and is
+not a TCP metric cadence.
 
 ## Deferred work
 
-The following remain later Phase 5 work: sock_diag transport and
-`INET_DIAG_INFO` parsing, TCP_INFO sampling, socket state collection,
-interface/process/cgroup attribution, compatible counter deltas, retransmission
-and RTT metrics, eBPF correlation, and V1 TCP migration.
+Phase 5.3 handles TCP_INFO field semantics/version availability, same-identity
+interval deltas, and retransmission/RTT metric definitions. This phase does
+not calculate TCP metrics, parse TCP_INFO deeply, attribute routed egress,
+attribute processes/cgroups, correlate eBPF, traverse namespaces, or replace
+the V1 TCP monitor.
