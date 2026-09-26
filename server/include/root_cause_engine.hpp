@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <atomic>
+#include <chrono>
 #include <deque>
 #include <map>
 #include <mutex>
@@ -19,6 +20,9 @@ struct RootCausePolicy {
     std::size_t max_recent_resolved{256};
     std::size_t max_evidence_per_hypothesis{8};
     std::size_t max_active_hypotheses{1024};
+    std::chrono::seconds probe_freshness{15};
+    std::uint64_t gateway_rtt_high_us{75'000};
+    std::uint64_t remote_rtt_high_us{175'000};
 };
 
 class RootCauseEngine {
@@ -58,6 +62,11 @@ private:
         RootCauseHypothesisObservation observation;
     };
 
+    struct ProbeCache {
+        std::optional<NetworkEvent> gateway;
+        std::optional<NetworkEvent> remote;
+    };
+
     using IncidentMap = std::map<IncidentId, IncidentObservation>;
 
     static bool sameContent(const RootCauseHypothesisObservation& left,
@@ -67,6 +76,8 @@ private:
     static RootCauseScope incidentScope(const IncidentObservation& incident);
     static bool scopeMatches(const IncidentScope& left, const RootCauseScope& right);
     static RootCauseEvidenceKind evidenceKind(IncidentType type);
+    static bool evidenceEquivalent(const RootCauseEvidence& left,
+                                   const RootCauseEvidence& right);
 
     void addEvidence(std::vector<RootCauseEvidence>& destination,
                      RootCauseEvidence evidence) const;
@@ -79,6 +90,12 @@ private:
                                           RootCauseEvidenceKind kind,
                                           RootCauseEvidenceCapability capability,
                                           std::string provenance) const;
+    RootCauseEvidence probeEvidence(const NetworkEvent& event,
+                                    RootCauseScope scope,
+                                    RootCauseEvidenceRole role,
+                                    RootCauseEvidenceKind kind,
+                                    RootCauseEvidenceCapability capability,
+                                    std::string provenance) const;
     std::map<CandidateKey, Candidate> buildCandidatesLocked() const;
     void reconcileLocked(RealtimeTime now,
                          std::vector<RootCauseHypothesisObservation>& emissions);
@@ -91,6 +108,7 @@ private:
     IncidentMap active_incidents_;
     std::map<SocketId, NetworkEvent> route_events_;
     std::map<NetnsId, NetworkEvent> uplink_events_;
+    std::map<NetnsId, ProbeCache> probe_events_;
     std::map<CandidateKey, RootCauseHypothesisObservation> active_;
     std::deque<RootCauseHypothesisObservation> resolved_;
     std::uint64_t next_occurrence_{1};

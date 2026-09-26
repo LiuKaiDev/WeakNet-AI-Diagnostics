@@ -81,7 +81,8 @@ DiagnosisSnapshot DiagnosticsQueryService::getDiagnosisSnapshot() const {
         result.limitations.emplace_back("authoritative topology unavailable");
     if (result.topology.degraded || result.topology.partial)
         result.limitations.emplace_back("topology collector degraded or partial");
-    result.limitations.emplace_back("gateway and remote active probes are unavailable");
+    result.limitations.emplace_back(
+        "active-probe evidence is freshness-bounded and target-specific");
     return result;
 }
 

@@ -1,4 +1,4 @@
-# ActiveProbe (first v2 stage)
+# ActiveProbe and deterministic evidence consumers
 
 `ActiveProbe` is an evidence collector. It periodically emits typed
 `ProbeObservation` values for one modeled gateway and one configured numeric
@@ -55,8 +55,26 @@ transport/capability failures, no-target results, and last success. It is
 started and stopped by `DaemonApplication`; a transport failure degrades probe
 capability without stopping the daemon.
 
-The observation is ready for a later small RootCauseEngine integration. This
-stage deliberately does not add probe incidents, change root-cause confidence,
-store RTT in MetricStore, expose new D-Bus reasoning, diagnose DNS, implement
-traceroute, redesign Wi-Fi/eBPF, or perform remediation.
+`RootCauseEngine` now consumes these observations directly as bounded,
+freshness-limited evidence. It retains only the latest gateway and remote
+sample per namespace. Gateway samples must match the current modeled binary
+gateway address, family, and interface; remote target replacement replaces the
+old cached identity. The default freshness window is 15 seconds and uses
+monotonic time.
 
+Successful RTTs are compared with reviewable engineering defaults (75 ms for
+the gateway and 175 ms for the configured remote), not learned baselines or
+universal quality claims. One timeout is weak evidence only. `NoTarget`,
+`TransportUnavailable`, `InvalidReply`, and transport `Error` remain missing or
+low-quality evidence. Although the schema reserves `Unreachable`, the current
+transport does not parse validated ICMP unreachable replies, so the diagnosis
+engine does not treat that status as path-failure evidence.
+
+Gateway success does not establish Internet health or prove every local
+component healthy. The configured numeric remote is path context only: it is
+not the observed TCP socket's endpoint and cannot prove ISP or remote-server
+failure. No packet-loss rate, timeout percentage, or probe incident is
+calculated. See `ROOT_CAUSE_ENGINE.md` for exact confidence rules.
+
+This stage deliberately does not store RTT in MetricStore, diagnose DNS,
+implement traceroute, redesign Wi-Fi/eBPF, or perform remediation.

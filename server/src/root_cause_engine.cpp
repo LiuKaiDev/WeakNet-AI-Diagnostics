@@ -12,10 +12,42 @@ bool usableValidity(Validity validity) noexcept {
     return validity == Validity::Valid || validity == Validity::Partial;
 }
 
+bool sameGatewayTarget(const ProbeTarget& target,
+                       const SocketRouteContextObservation& context) noexcept {
+    if (target.kind != ProbeTargetKind::Gateway || target.netns != context.netns ||
+        !context.route || !context.route->gateway || !context.selected_interface ||
+        !target.interface) return false;
+    return target.family == context.route->family &&
+           target.address == *context.route->gateway &&
+           *target.interface == *context.selected_interface;
+}
+
+bool newerProbe(const NetworkEvent& incoming, const NetworkEvent& current) noexcept {
+    const auto& left = std::get<ProbeObservation>(incoming.payload());
+    const auto& right = std::get<ProbeObservation>(current.payload());
+    return left.monotonic_at > right.monotonic_at ||
+           (left.monotonic_at == right.monotonic_at && left.sequence >= right.sequence);
+}
+
 std::optional<SocketId> socketFromScope(const RootCauseScope& scope) {
     if (const auto* socket = std::get_if<SocketId>(&scope)) return *socket;
     return std::nullopt;
 }
+
+enum class ProbeMeaning : std::uint8_t {
+    Missing,
+    Stale,
+    Reachable,
+    HighRtt,
+    Timeout,
+};
+
+struct ProbeFact {
+    const NetworkEvent* event{};
+    ProbeMeaning meaning{ProbeMeaning::Missing};
+    RootCauseEvidenceCapability capability{RootCauseEvidenceCapability::Unavailable};
+    std::string provenance;
+};
 
 }  // namespace
 
@@ -23,7 +55,9 @@ RootCauseEngine::RootCauseEngine(EventBus& bus, const Clock& clock,
                                  RootCausePolicy policy)
     : bus_(bus), clock_(clock), policy_(policy) {
     if (policy_.max_recent_resolved == 0 || policy_.max_evidence_per_hypothesis == 0 ||
-        policy_.max_active_hypotheses == 0) {
+        policy_.max_active_hypotheses == 0 ||
+        policy_.probe_freshness <= std::chrono::seconds::zero() ||
+        policy_.gateway_rtt_high_us == 0 || policy_.remote_rtt_high_us == 0) {
         throw std::invalid_argument("RootCausePolicy requires positive bounds");
     }
 }
@@ -160,6 +194,20 @@ RootCauseEvidence RootCauseEngine::observationEvidence(
     return evidence;
 }
 
+RootCauseEvidence RootCauseEngine::probeEvidence(
+    const NetworkEvent& event, RootCauseScope scope, RootCauseEvidenceRole role,
+    RootCauseEvidenceKind kind, RootCauseEvidenceCapability capability,
+    std::string provenance) const {
+    auto evidence = observationEvidence(event, std::move(scope), role, kind,
+                                        capability, std::move(provenance));
+    const auto& observation = std::get<ProbeObservation>(event.payload());
+    if (observation.rtt_us) {
+        evidence.value = IncidentEvidenceValue{*observation.rtt_us};
+        evidence.unit = RootCauseEvidenceUnit::Microseconds;
+    }
+    return evidence;
+}
+
 std::map<RootCauseEngine::CandidateKey, RootCauseEngine::Candidate>
 RootCauseEngine::buildCandidatesLocked() const {
     std::map<CandidateKey, Candidate> candidates;
@@ -185,6 +233,95 @@ RootCauseEngine::buildCandidatesLocked() const {
                 kNetworkEventSchemaVersion, EventId{1}, {}, EventKind::SocketRouteObservation,
                 EventSource::SocketTracker, {}, {}, socket.netns, std::nullopt, socket,
                 validity, std::nullopt}, context);
+    };
+    auto syntheticProbeEvent = [](NetnsId netns, ProbeTargetKind kind) {
+        ProbeTarget target;
+        target.kind = kind;
+        target.netns = netns;
+        ProbeObservation observation;
+        observation.target = target;
+        observation.netns = netns;
+        observation.status = ProbeStatus::NoTarget;
+        observation.validity = Validity::Unavailable;
+        return NetworkEvent(NetworkEventHeader{
+                kNetworkEventSchemaVersion, EventId{1}, {}, EventKind::ProbeObservation,
+                EventSource::ActiveProbe, {}, {}, netns, std::nullopt, std::nullopt,
+                Validity::Unavailable, std::nullopt}, observation);
+    };
+    auto cachedProbe = [&](NetnsId netns, ProbeTargetKind kind) -> const NetworkEvent* {
+        const auto cache = probe_events_.find(netns);
+        if (cache == probe_events_.end()) return nullptr;
+        const auto& event = kind == ProbeTargetKind::Gateway
+            ? cache->second.gateway : cache->second.remote;
+        return event ? &*event : nullptr;
+    };
+    auto classifyProbe = [&](NetnsId netns, ProbeTargetKind kind,
+                             const SocketRouteContextObservation* route) {
+        ProbeFact fact;
+        fact.event = cachedProbe(netns, kind);
+        if (!fact.event) {
+            fact.provenance = kind == ProbeTargetKind::Gateway
+                ? "no gateway probe observation available"
+                : "no remote probe observation available";
+            return fact;
+        }
+        const auto& observation = std::get<ProbeObservation>(fact.event->payload());
+        if (kind == ProbeTargetKind::Gateway &&
+            (!route || !sameGatewayTarget(observation.target, *route))) {
+            fact.provenance = "gateway probe target does not match the current modeled gateway";
+            return fact;
+        }
+        const auto now = clock_.monotonicNow();
+        if (observation.monotonic_at > now ||
+            now - observation.monotonic_at > policy_.probe_freshness) {
+            fact.meaning = ProbeMeaning::Stale;
+            fact.provenance = kind == ProbeTargetKind::Gateway
+                ? "gateway probe observation is older than the freshness window"
+                : "remote probe observation is older than the freshness window";
+            return fact;
+        }
+        switch (observation.status) {
+            case ProbeStatus::Success:
+                if (!usableValidity(observation.validity)) {
+                    fact.provenance = "successful probe has unusable validity";
+                    return fact;
+                }
+                fact.capability = RootCauseEvidenceCapability::Available;
+                fact.meaning = observation.rtt_us &&
+                        *observation.rtt_us >= (kind == ProbeTargetKind::Gateway
+                            ? policy_.gateway_rtt_high_us : policy_.remote_rtt_high_us)
+                    ? ProbeMeaning::HighRtt : ProbeMeaning::Reachable;
+                fact.provenance = kind == ProbeTargetKind::Gateway
+                    ? "fresh gateway probe success" : "fresh configured remote probe success";
+                return fact;
+            case ProbeStatus::Timeout:
+                if (!usableValidity(observation.validity)) {
+                    fact.provenance = "probe timeout has unusable validity";
+                    return fact;
+                }
+                fact.capability = RootCauseEvidenceCapability::Available;
+                fact.meaning = ProbeMeaning::Timeout;
+                fact.provenance = kind == ProbeTargetKind::Gateway
+                    ? "one fresh gateway probe timed out"
+                    : "one fresh configured remote probe timed out";
+                return fact;
+            case ProbeStatus::TransportUnavailable:
+                fact.provenance = "probe transport unavailable; target reachability is unknown";
+                return fact;
+            case ProbeStatus::NoTarget:
+                fact.provenance = "no usable probe target; reachability is unknown";
+                return fact;
+            case ProbeStatus::InvalidReply:
+                fact.provenance = "probe reply was invalid; reachability is unknown";
+                return fact;
+            case ProbeStatus::Error:
+                fact.provenance = "probe error; reachability is unknown";
+                return fact;
+            case ProbeStatus::Unreachable:
+                fact.provenance = "explicit unreachable interpretation is not implemented by ActiveProbe";
+                return fact;
+        }
+        return fact;
     };
 
     for (const auto& [id, incident] : active_incidents_) {
@@ -273,6 +410,27 @@ RootCauseEngine::buildCandidatesLocked() const {
                     else if (candidate.observation.confidence == HypothesisConfidence::Medium)
                         candidate.observation.confidence = HypothesisConfidence::Low;
                 }
+                const auto gateway_probe = classifyProbe(socket.netns,
+                    ProbeTargetKind::Gateway, &context);
+                if (gateway_probe.event && gateway_probe.meaning == ProbeMeaning::Reachable) {
+                    addEvidence(candidate.observation.contradicting_evidence,
+                        probeEvidence(*gateway_probe.event, key.scope,
+                            RootCauseEvidenceRole::Contradicting,
+                            RootCauseEvidenceKind::GatewayProbeReachable,
+                            RootCauseEvidenceCapability::Available,
+                            "gateway reachability is context, not proof that policy routing is correct"));
+                } else if (gateway_probe.event &&
+                           (gateway_probe.meaning == ProbeMeaning::HighRtt ||
+                            gateway_probe.meaning == ProbeMeaning::Timeout)) {
+                    addEvidence(candidate.observation.supporting_evidence,
+                        probeEvidence(*gateway_probe.event, key.scope,
+                            RootCauseEvidenceRole::Supporting,
+                            gateway_probe.meaning == ProbeMeaning::HighRtt
+                                ? RootCauseEvidenceKind::GatewayProbeHighRtt
+                                : RootCauseEvidenceKind::GatewayProbeTimeout,
+                            RootCauseEvidenceCapability::Available,
+                            "gateway probe degradation is context, not proof of routing misconfiguration"));
+                }
             }
         }
         if (key.type != RootCauseType::NetworkPathDegradation) continue;
@@ -339,26 +497,110 @@ RootCauseEngine::buildCandidatesLocked() const {
                             RootCauseEvidenceCapability::Unavailable,
                             "authoritative uplink state unavailable"));
         }
-        addEvidence(candidate.observation.missing_evidence,
-                    observationEvidence(NetworkEvent(
-                        NetworkEventHeader{kNetworkEventSchemaVersion, EventId{1}, {},
-                            EventKind::CollectorHealth, EventSource::Runtime, {}, {},
-                            socket->netns, std::nullopt, *socket, Validity::Unavailable,
-                            std::nullopt}, CollectorHealthObservation{"gateway_probe", CollectorState::Disabled}),
-                        key.scope, RootCauseEvidenceRole::Missing,
-                        RootCauseEvidenceKind::GatewayProbeUnavailable,
-                        RootCauseEvidenceCapability::NotImplemented,
-                        "gateway probe is not implemented in this stage"));
-        addEvidence(candidate.observation.missing_evidence,
-                    observationEvidence(NetworkEvent(
-                        NetworkEventHeader{kNetworkEventSchemaVersion, EventId{1}, {},
-                            EventKind::CollectorHealth, EventSource::Runtime, {}, {},
-                            socket->netns, std::nullopt, *socket, Validity::Unavailable,
-                            std::nullopt}, CollectorHealthObservation{"remote_probe", CollectorState::Disabled}),
-                        key.scope, RootCauseEvidenceRole::Missing,
-                        RootCauseEvidenceKind::RemoteProbeUnavailable,
-                        RootCauseEvidenceCapability::NotImplemented,
-                        "remote active probe is not implemented in this stage"));
+        const auto gateway_probe = classifyProbe(socket->netns, ProbeTargetKind::Gateway,
+                                                 route_context);
+        const auto remote_probe = classifyProbe(socket->netns, ProbeTargetKind::Remote,
+                                                route_context);
+        auto addProbeFact = [&](const ProbeFact& fact, ProbeTargetKind target_kind) {
+            const auto fallback = syntheticProbeEvent(socket->netns, target_kind);
+            const auto& source = fact.event ? *fact.event : fallback;
+            const bool gateway = target_kind == ProbeTargetKind::Gateway;
+            switch (fact.meaning) {
+                case ProbeMeaning::Reachable:
+                    addEvidence(gateway ? candidate.observation.supporting_evidence
+                                        : candidate.observation.contradicting_evidence,
+                        probeEvidence(source, key.scope,
+                            gateway ? RootCauseEvidenceRole::Supporting
+                                    : RootCauseEvidenceRole::Contradicting,
+                            gateway ? RootCauseEvidenceKind::GatewayProbeReachable
+                                    : RootCauseEvidenceKind::RemoteProbeReachable,
+                            fact.capability, fact.provenance));
+                    break;
+                case ProbeMeaning::HighRtt:
+                    addEvidence(candidate.observation.supporting_evidence,
+                        probeEvidence(source, key.scope, RootCauseEvidenceRole::Supporting,
+                            gateway ? RootCauseEvidenceKind::GatewayProbeHighRtt
+                                    : RootCauseEvidenceKind::RemoteProbeHighRtt,
+                            fact.capability, fact.provenance));
+                    break;
+                case ProbeMeaning::Timeout:
+                    addEvidence(candidate.observation.supporting_evidence,
+                        probeEvidence(source, key.scope, RootCauseEvidenceRole::Supporting,
+                            gateway ? RootCauseEvidenceKind::GatewayProbeTimeout
+                                    : RootCauseEvidenceKind::RemoteProbeTimeout,
+                            fact.capability, fact.provenance));
+                    break;
+                case ProbeMeaning::Stale:
+                    addEvidence(candidate.observation.missing_evidence,
+                        probeEvidence(source, key.scope, RootCauseEvidenceRole::Missing,
+                            RootCauseEvidenceKind::ProbeEvidenceStale,
+                            RootCauseEvidenceCapability::Unavailable, fact.provenance));
+                    break;
+                case ProbeMeaning::Missing:
+                    addEvidence(candidate.observation.missing_evidence,
+                        probeEvidence(source, key.scope, RootCauseEvidenceRole::Missing,
+                            gateway ? RootCauseEvidenceKind::GatewayProbeUnavailable
+                                    : RootCauseEvidenceKind::RemoteProbeUnavailable,
+                            fact.capability, fact.provenance));
+                    break;
+            }
+        };
+        addProbeFact(gateway_probe, ProbeTargetKind::Gateway);
+        addProbeFact(remote_probe, ProbeTargetKind::Remote);
+
+        const bool gateway_healthy = gateway_probe.meaning == ProbeMeaning::Reachable;
+        const bool gateway_high = gateway_probe.meaning == ProbeMeaning::HighRtt;
+        const bool remote_high = remote_probe.meaning == ProbeMeaning::HighRtt;
+        const bool remote_timeout = remote_probe.meaning == ProbeMeaning::Timeout;
+        const bool has_rtt_incident = std::any_of(
+            candidate.observation.supporting_evidence.begin(),
+            candidate.observation.supporting_evidence.end(), [](const auto& evidence) {
+                return evidence.kind == RootCauseEvidenceKind::HighTcpRtt;
+            });
+        const bool has_retransmission_incident = std::any_of(
+            candidate.observation.supporting_evidence.begin(),
+            candidate.observation.supporting_evidence.end(), [](const auto& evidence) {
+                return evidence.kind == RootCauseEvidenceKind::ElevatedTcpRetransmission;
+            });
+        if (gateway_high && candidate.observation.confidence == HypothesisConfidence::Low)
+            candidate.observation.confidence = HypothesisConfidence::Medium;
+        if (remote_high && candidate.observation.confidence == HypothesisConfidence::Low)
+            candidate.observation.confidence = HypothesisConfidence::Medium;
+        if (gateway_healthy && (remote_high || remote_timeout)) {
+            if (candidate.observation.confidence == HypothesisConfidence::Low)
+                candidate.observation.confidence = HypothesisConfidence::Medium;
+            else if (candidate.observation.confidence == HypothesisConfidence::Medium &&
+                     remote_high && has_rtt_incident && has_retransmission_incident)
+                candidate.observation.confidence = HypothesisConfidence::High;
+        }
+        const auto usableProbeContext = [](ProbeMeaning meaning) {
+            return meaning == ProbeMeaning::Reachable || meaning == ProbeMeaning::HighRtt ||
+                   meaning == ProbeMeaning::Timeout;
+        };
+        if (route_available && uplink_available &&
+            (!usableProbeContext(gateway_probe.meaning) ||
+             !usableProbeContext(remote_probe.meaning))) {
+            Candidate insufficient_candidate;
+            auto& insufficient_observation = insufficient_candidate.observation;
+            insufficient_observation.type = RootCauseType::InsufficientEvidence;
+            insufficient_observation.scope = key.scope;
+            insufficient_observation.opened_at = candidate.observation.opened_at;
+            insufficient_observation.last_updated_at = candidate.observation.last_updated_at;
+            insufficient_observation.confidence = HypothesisConfidence::Low;
+            insufficient_observation.reason_code = "tcp_probe_context_unavailable";
+            for (const auto& evidence : candidate.observation.supporting_evidence) {
+                if (evidence.kind == RootCauseEvidenceKind::HighTcpRtt ||
+                    evidence.kind == RootCauseEvidenceKind::ElevatedTcpRetransmission)
+                    addEvidence(insufficient_observation.supporting_evidence, evidence);
+            }
+            for (const auto& evidence : candidate.observation.missing_evidence) {
+                if (evidence.kind == RootCauseEvidenceKind::GatewayProbeUnavailable ||
+                    evidence.kind == RootCauseEvidenceKind::RemoteProbeUnavailable ||
+                    evidence.kind == RootCauseEvidenceKind::ProbeEvidenceStale)
+                    addEvidence(insufficient_observation.missing_evidence, evidence);
+            }
+            insufficient.push_back(std::move(insufficient_candidate));
+        }
     }
     for (auto& candidate : insufficient) {
         candidates.emplace(CandidateKey{candidate.observation.type, candidate.observation.scope},
@@ -384,8 +626,9 @@ RootCauseEngine::buildCandidatesLocked() const {
         }
     }
 
-    // Remote/upstream is intentionally conservative: it is an alternative
-    // only when both local modeled route and uplink facts are positive.
+    // Remote/upstream is emitted only when current target-matched probes add
+    // location context to active TCP degradation.  The configured remote is
+    // not assumed to be the socket's endpoint.
     std::vector<Candidate> remote;
     for (const auto& [key, candidate] : candidates) {
         if (key.type != RootCauseType::NetworkPathDegradation) continue;
@@ -401,6 +644,13 @@ RootCauseEngine::buildCandidatesLocked() const {
             !usableValidity(route->second.header().validity) ||
             !uplink_observation.selected ||
             !usableValidity(uplink->second.header().validity)) continue;
+        const auto gateway_probe = classifyProbe(socket->netns, ProbeTargetKind::Gateway,
+                                                 &route_context);
+        const auto remote_probe = classifyProbe(socket->netns, ProbeTargetKind::Remote,
+                                                &route_context);
+        if (gateway_probe.meaning != ProbeMeaning::Reachable ||
+            (remote_probe.meaning != ProbeMeaning::HighRtt &&
+             remote_probe.meaning != ProbeMeaning::Timeout)) continue;
         CandidateKey remote_key{RootCauseType::RemoteOrUpstreamDegradation, key.scope};
         Candidate remote_candidate;
         auto& hypothesis = remote_candidate.observation;
@@ -408,28 +658,21 @@ RootCauseEngine::buildCandidatesLocked() const {
         hypothesis.scope = remote_key.scope;
         hypothesis.opened_at = candidate.observation.opened_at;
         hypothesis.last_updated_at = candidate.observation.last_updated_at;
-        hypothesis.confidence = HypothesisConfidence::Low;
-        hypothesis.reason_code = "local_route_and_uplink_healthy_path_degraded";
+        hypothesis.confidence = HypothesisConfidence::Medium;
+        hypothesis.reason_code = "degradation_appears_beyond_local_gateway";
         for (const auto& evidence : candidate.observation.supporting_evidence)
             addEvidence(hypothesis.supporting_evidence, evidence);
-        addEvidence(hypothesis.missing_evidence, observationEvidence(
-            NetworkEvent(NetworkEventHeader{kNetworkEventSchemaVersion, EventId{1}, {},
-                EventKind::CollectorHealth, EventSource::Runtime, {}, {}, socket->netns,
-                std::nullopt, *socket, Validity::Unavailable, std::nullopt},
-                CollectorHealthObservation{"gateway_probe", CollectorState::Disabled}),
-            key.scope, RootCauseEvidenceRole::Missing,
-            RootCauseEvidenceKind::GatewayLatencyUnavailable,
+        const auto fallback = syntheticProbeEvent(socket->netns, ProbeTargetKind::Remote);
+        addEvidence(hypothesis.missing_evidence, probeEvidence(
+            fallback, key.scope, RootCauseEvidenceRole::Missing,
+            RootCauseEvidenceKind::SocketEndpointSpecificProbeUnavailable,
             RootCauseEvidenceCapability::NotImplemented,
-            "gateway latency probe is unavailable"));
-        addEvidence(hypothesis.missing_evidence, observationEvidence(
-            NetworkEvent(NetworkEventHeader{kNetworkEventSchemaVersion, EventId{1}, {},
-                EventKind::CollectorHealth, EventSource::Runtime, {}, {}, socket->netns,
-                std::nullopt, *socket, Validity::Unavailable, std::nullopt},
-                CollectorHealthObservation{"remote_probe", CollectorState::Disabled}),
-            key.scope, RootCauseEvidenceRole::Missing,
-            RootCauseEvidenceKind::ActiveRemoteProbeUnavailable,
+            "configured remote probe is not specific to the socket endpoint"));
+        addEvidence(hypothesis.missing_evidence, probeEvidence(
+            fallback, key.scope, RootCauseEvidenceRole::Missing,
+            RootCauseEvidenceKind::HopLevelEvidenceUnavailable,
             RootCauseEvidenceCapability::NotImplemented,
-            "active remote probe is unavailable"));
+            "hop-level path evidence is not implemented"));
         remote.push_back(std::move(remote_candidate));
     }
     for (auto& candidate : remote) {
@@ -439,13 +682,30 @@ RootCauseEngine::buildCandidatesLocked() const {
     return candidates;
 }
 
+bool RootCauseEngine::evidenceEquivalent(const RootCauseEvidence& left,
+                                         const RootCauseEvidence& right) {
+    return left.incident == right.incident &&
+           left.source_kind == right.source_kind && left.source == right.source &&
+           left.scope == right.scope && left.role == right.role &&
+           left.kind == right.kind && left.value == right.value &&
+           left.unit == right.unit && left.validity == right.validity &&
+           left.capability == right.capability && left.provenance == right.provenance;
+}
+
 bool RootCauseEngine::sameContent(const RootCauseHypothesisObservation& left,
                                   const RootCauseHypothesisObservation& right) {
+    const auto sameEvidence = [](const auto& first, const auto& second) {
+        return first.size() == second.size() &&
+               std::equal(first.begin(), first.end(), second.begin(),
+                          [](const auto& a, const auto& b) {
+                              return evidenceEquivalent(a, b);
+                          });
+    };
     return left.type == right.type && left.scope == right.scope &&
            left.confidence == right.confidence &&
-           left.supporting_evidence == right.supporting_evidence &&
-           left.contradicting_evidence == right.contradicting_evidence &&
-           left.missing_evidence == right.missing_evidence &&
+           sameEvidence(left.supporting_evidence, right.supporting_evidence) &&
+           sameEvidence(left.contradicting_evidence, right.contradicting_evidence) &&
+           sameEvidence(left.missing_evidence, right.missing_evidence) &&
            left.reason_code == right.reason_code;
 }
 
@@ -531,6 +791,20 @@ bool RootCauseEngine::process(const NetworkEvent& event) {
                 consumed = true;
                 reconcileLocked(event.header().observed_at, emissions);
                 break;
+            case EventKind::ProbeObservation: {
+                if (event.header().source != EventSource::ActiveProbe) break;
+                const auto& observation = std::get<ProbeObservation>(event.payload());
+                auto& cache = probe_events_[observation.netns];
+                auto& current = observation.target.kind == ProbeTargetKind::Gateway
+                    ? cache.gateway : cache.remote;
+                consumed = true;
+                if (current && !newerProbe(event, *current)) break;
+                current = event;
+                while (probe_events_.size() > policy_.max_active_hypotheses)
+                    probe_events_.erase(probe_events_.begin());
+                reconcileLocked(event.header().observed_at, emissions);
+                break;
+            }
             default:
                 break;
         }

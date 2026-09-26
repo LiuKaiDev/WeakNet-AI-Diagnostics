@@ -9,6 +9,41 @@
 
 namespace weaknet_dbus::v2 {
 
+const char* rootCauseEvidenceKindName(RootCauseEvidenceKind kind) noexcept {
+    switch (kind) {
+        case RootCauseEvidenceKind::ActiveIncident: return "ActiveIncident";
+        case RootCauseEvidenceKind::AuthoritativeNoUsableUplink: return "AuthoritativeNoUsableUplink";
+        case RootCauseEvidenceKind::AuthoritativeRouteUnavailable: return "AuthoritativeRouteUnavailable";
+        case RootCauseEvidenceKind::SocketRouteConflict: return "SocketRouteConflict";
+        case RootCauseEvidenceKind::ModeledRouteAvailable: return "ModeledRouteAvailable";
+        case RootCauseEvidenceKind::UsableUplinkAvailable: return "UsableUplinkAvailable";
+        case RootCauseEvidenceKind::HighTcpRtt: return "HighTcpRtt";
+        case RootCauseEvidenceKind::ElevatedTcpRetransmission: return "ElevatedTcpRetransmission";
+        case RootCauseEvidenceKind::GatewayProbeUnavailable: return "GatewayProbeUnavailable";
+        case RootCauseEvidenceKind::RemoteProbeUnavailable: return "RemoteProbeUnavailable";
+        case RootCauseEvidenceKind::GatewayLatencyUnavailable: return "GatewayLatencyUnavailable";
+        case RootCauseEvidenceKind::WifiLinkQualityUnavailable: return "WifiLinkQualityUnavailable";
+        case RootCauseEvidenceKind::ActiveRemoteProbeUnavailable: return "ActiveRemoteProbeUnavailable";
+        case RootCauseEvidenceKind::PolicyRoutingStateUnavailable: return "PolicyRoutingStateUnavailable";
+        case RootCauseEvidenceKind::IpRuleNotModeled: return "IpRuleNotModeled";
+        case RootCauseEvidenceKind::VrfStateUnavailable: return "VrfStateUnavailable";
+        case RootCauseEvidenceKind::TopologyUnavailable: return "TopologyUnavailable";
+        case RootCauseEvidenceKind::AttributionAmbiguous: return "AttributionAmbiguous";
+        case RootCauseEvidenceKind::GatewayProbeReachable: return "GatewayProbeReachable";
+        case RootCauseEvidenceKind::GatewayProbeHighRtt: return "GatewayProbeHighRtt";
+        case RootCauseEvidenceKind::GatewayProbeTimeout: return "GatewayProbeTimeout";
+        case RootCauseEvidenceKind::RemoteProbeReachable: return "RemoteProbeReachable";
+        case RootCauseEvidenceKind::RemoteProbeHighRtt: return "RemoteProbeHighRtt";
+        case RootCauseEvidenceKind::RemoteProbeTimeout: return "RemoteProbeTimeout";
+        case RootCauseEvidenceKind::ProbeEvidenceStale: return "ProbeEvidenceStale";
+        case RootCauseEvidenceKind::SocketEndpointSpecificProbeUnavailable:
+            return "SocketEndpointSpecificProbeUnavailable";
+        case RootCauseEvidenceKind::HopLevelEvidenceUnavailable: return "HopLevelEvidenceUnavailable";
+        case RootCauseEvidenceKind::GatewayDeviceHealthUnavailable: return "GatewayDeviceHealthUnavailable";
+    }
+    return "Unknown";
+}
+
 std::string SocketEndpoint::toString() const {
     char buffer[INET6_ADDRSTRLEN]{};
     if (!inet_ntop(family, address.data(), buffer, sizeof(buffer))) return {};

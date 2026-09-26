@@ -33,8 +33,9 @@ RootCauseEngine now provides the first bounded deterministic hypothesis stage.
 The additive experimental V2 read-only D-Bus surface and `weaknetctl` query
 commands are implemented; read `docs/V2_API_AND_CLI.md` after the diagnosis
 engine documents.
-The first ActiveProbe evidence collector is implemented; read
-`docs/ACTIVE_PROBE.md` before treating probe observations as diagnosis.
+The first ActiveProbe evidence collector and RootCauseEngine enrichment are
+implemented; read `docs/ACTIVE_PROBE.md` and `docs/ROOT_CAUSE_ENGINE.md` before
+treating probe observations as diagnosis.
 SocketTracker now provides the Phase 5.3 TCP_INFO metric path and Phase 5.4
 modeled route context. The first deterministic IncidentEngine stage is
 implemented; its incidents are not root causes and
@@ -261,6 +262,18 @@ Use three contrasting fixtures:
 - a link/route problem affecting many sockets;
 - one impaired endpoint while other sockets are healthy;
 - insufficient collector visibility.
+
+Then follow `ProbeObservation` through the engine's bounded per-namespace
+cache. Check the 15-second monotonic freshness policy, gateway target matching,
+remote target replacement, and the distinction between `Timeout` and
+`TransportUnavailable`. Compare these combinations:
+
+- TCP degradation plus normal gateway and degraded configured remote;
+- TCP degradation plus degraded gateway;
+- TCP degradation plus normal gateway and normal configured remote.
+
+The configured remote is path context, not the socket endpoint. Confirm that
+no timeout ratio is calculated and that `LocalLinkSuspected` remains deferred.
 
 You should be able to reproduce every result from the rule version and cited event/sample IDs without consulting an LLM.
 

@@ -476,7 +476,7 @@ std::string roleName(weaknet_dbus::v2::RootCauseEvidenceRole role) {
 }
 
 std::string evidenceKindName(weaknet_dbus::v2::RootCauseEvidenceKind kind) {
-    return std::to_string(static_cast<unsigned>(kind));
+    return weaknet_dbus::v2::rootCauseEvidenceKindName(kind);
 }
 
 bool appendIncidentEvidenceArray(DBusMessageIter* dict, const char* key,

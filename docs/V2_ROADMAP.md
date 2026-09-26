@@ -337,10 +337,12 @@ Tests:
 
 ## Phase 9: RootCauseEngine
 
-Status: the first bounded deterministic stage is implemented in the current
-working tree. It covers the initial typed hypothesis catalog and consumes
-IncidentEngine plus existing route/uplink evidence. Broader probe, Wi-Fi,
-collector-health correlation and replay tooling remain future work.
+Status: the bounded deterministic stage now consumes IncidentEngine,
+route/uplink context, and the latest fresh target-matched ActiveProbe evidence.
+It distinguishes gateway-side path evidence from a conservative
+beyond-the-gateway pattern without claiming ISP or remote-server failure.
+Wi-Fi, collector-health correlation, hop/endpoint-specific probes, and replay
+tooling remain future work.
 
 Objective: produce explainable evidence-backed cause candidates entirely in C++.
 
@@ -375,9 +377,11 @@ Status: the first read-only query/API/CLI slice is implemented in the current
 working tree. The V1 surface remains unchanged; deployment migration,
 write/configuration operations, and API freeze remain future work.
 
-The first ActiveProbe evidence slice is also implemented alongside this
-surface: typed gateway/remote IPv4 probe observations, bounded native ICMP
-transport, and lifecycle integration. Probe interpretation remains deferred.
+The ActiveProbe slice is implemented alongside this surface: typed
+gateway/remote IPv4 probe observations, bounded native ICMP transport,
+lifecycle integration, and freshness/identity-aware RootCauseEngine
+interpretation. Probe incidents, loss windows, and transport expansion remain
+deferred.
 
 Objective: expose V2 as a production service while preserving explicit compatibility.
 

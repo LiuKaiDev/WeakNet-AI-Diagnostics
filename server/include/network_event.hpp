@@ -446,7 +446,19 @@ enum class RootCauseEvidenceKind : std::uint8_t {
     VrfStateUnavailable,
     TopologyUnavailable,
     AttributionAmbiguous,
+    GatewayProbeReachable,
+    GatewayProbeHighRtt,
+    GatewayProbeTimeout,
+    RemoteProbeReachable,
+    RemoteProbeHighRtt,
+    RemoteProbeTimeout,
+    ProbeEvidenceStale,
+    SocketEndpointSpecificProbeUnavailable,
+    HopLevelEvidenceUnavailable,
+    GatewayDeviceHealthUnavailable,
 };
+
+const char* rootCauseEvidenceKindName(RootCauseEvidenceKind kind) noexcept;
 
 enum class RootCauseEvidenceUnit : std::uint8_t {
     None,

@@ -24,8 +24,10 @@ Methods are read-only and have no input arguments:
 | `GetDiagnosis` | `a{sv}` containing status and nested incident/hypothesis arrays |
 | `GetTopologySummary` | `a{sv}` |
 
-Dictionary values use D-Bus variants. Enum values are names or documented
-numeric evidence-kind values; internal C++ variant layouts and kernel structs
+Dictionary values use D-Bus variants. Root-cause evidence kinds are serialized
+as stable descriptive names such as `GatewayProbeReachable`,
+`RemoteProbeTimeout`, and `ProbeEvidenceStale`; other enum fields remain names
+or documented numeric values. Internal C++ variant layouts and kernel structs
 are not part of the ABI. Timestamps are realtime Unix milliseconds. Socket and
 namespace scopes include namespace identity and socket generation; interface
 names are metadata, never identity.
@@ -71,6 +73,9 @@ and 2 for Unknown. `incidents` and `hypotheses` are successful listings and
 exit 0 even when entries exist. Daemon/D-Bus/usage errors exit 3 or higher.
 `diagnose` prints status, active incidents, and active hypotheses using only
 deterministic structured fields; it does not generate LLM prose.
+Probe-derived supporting, contradicting, and missing evidence appears through
+the existing hypothesis evidence fields and summaries; there is no diagnosis
+logic or separate probe command in the CLI.
 
 There are no write, configuration, remediation, acknowledgement, or daemon
 control commands. JSON output is deferred because the current codebase has no
