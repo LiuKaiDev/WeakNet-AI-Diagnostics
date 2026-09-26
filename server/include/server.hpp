@@ -13,6 +13,8 @@ class RuntimeHealth;
 class WeakNetMgr;
 namespace v2 { class V1ObservationAdapter; }
 namespace v2 { class NetlinkCollector; }
+namespace v2 { class IncidentEngine; class RootCauseEngine; }
+namespace v2 { class DiagnosticsQueryService; }
 
 // Non-owning view passed to the retained V1 workers. DaemonApplication owns
 // every referenced object and joins all workers before destroying them.
@@ -25,6 +27,9 @@ struct ServerContext {
     RuntimeHealth* health = nullptr;
     v2::V1ObservationAdapter* v2_adapter = nullptr;
     v2::NetlinkCollector* topology = nullptr;
+    v2::IncidentEngine* incidents = nullptr;
+    v2::RootCauseEngine* root_causes = nullptr;
+    v2::DiagnosticsQueryService* diagnostics = nullptr;
 };
 
 void run_iface_monitor(ServerContext* ctx, std::stop_token token);

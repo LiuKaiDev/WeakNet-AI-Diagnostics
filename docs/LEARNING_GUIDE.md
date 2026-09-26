@@ -30,6 +30,9 @@ Phase 1 through Phase 3 are now the implemented baseline. The top-level `CMakeLi
 
 The later names `weaknetd` and `weaknetctl` remain target architecture.
 RootCauseEngine now provides the first bounded deterministic hypothesis stage.
+The additive experimental V2 read-only D-Bus surface and `weaknetctl` query
+commands are implemented; read `docs/V2_API_AND_CLI.md` after the diagnosis
+engine documents.
 SocketTracker now provides the Phase 5.3 TCP_INFO metric path and Phase 5.4
 modeled route context. The first deterministic IncidentEngine stage is
 implemented; its incidents are not root causes and

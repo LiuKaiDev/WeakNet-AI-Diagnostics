@@ -371,6 +371,10 @@ Tests:
 
 ## Phase 10: Versioned D-Bus API, `weaknetd`, and `weaknetctl`
 
+Status: the first read-only query/API/CLI slice is implemented in the current
+working tree. The V1 surface remains unchanged; deployment migration,
+write/configuration operations, and API freeze remain future work.
+
 Objective: expose V2 as a production service while preserving explicit compatibility.
 
 Scope:

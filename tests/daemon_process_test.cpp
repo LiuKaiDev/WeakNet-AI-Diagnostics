@@ -17,6 +17,8 @@ namespace {
 constexpr const char* kBusName = "com.example.WeakNet";
 constexpr const char* kObjectPath = "/com/example/WeakNet";
 constexpr const char* kInterface = "com.example.WeakNet";
+constexpr const char* kV2Path = "/com/example/WeakNet/V2";
+constexpr const char* kV2Interface = "com.example.WeakNet.Diagnostics2";
 
 bool expect(bool condition, const std::string& message) {
     if (!condition) std::cerr << message << '\n';
@@ -131,6 +133,30 @@ bool interfaceListMethodWorks(DBusConnection* connection, const char* method) {
     return valid;
 }
 
+bool v2MethodWorks(DBusConnection* connection, const char* method, bool dictionary) {
+    DBusMessage* message = dbus_message_new_method_call(
+        kBusName, kV2Path, kV2Interface, method);
+    if (!message) return false;
+    DBusError error;
+    dbus_error_init(&error);
+    DBusMessage* reply = dbus_connection_send_with_reply_and_block(
+        connection, message, 3000, &error);
+    dbus_message_unref(message);
+    if (!reply || dbus_error_is_set(&error) || dbus_message_get_type(reply) == DBUS_MESSAGE_TYPE_ERROR) {
+        if (dbus_error_is_set(&error)) dbus_error_free(&error);
+        if (reply) dbus_message_unref(reply);
+        return false;
+    }
+    DBusMessageIter iter;
+    const bool valid = dbus_message_iter_init(reply, &iter) &&
+        dbus_message_iter_get_arg_type(&iter) == DBUS_TYPE_ARRAY &&
+        ((!dictionary && dbus_message_iter_get_element_type(&iter) == DBUS_TYPE_ARRAY) ||
+         dictionary);
+    if (dbus_error_is_set(&error)) dbus_error_free(&error);
+    dbus_message_unref(reply);
+    return valid;
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -166,6 +192,11 @@ int main(int argc, char** argv) {
     ok &= expect(interfaceListMethodWorks(connection, "GetInterfaces"),
                  "V1 GetInterfaces did not return an array");
     ok &= expect(degradedHealthVisible(connection), "degraded runtime health was not visible");
+    ok &= expect(v2MethodWorks(connection, "GetStatus", true), "V2 GetStatus failed");
+    ok &= expect(v2MethodWorks(connection, "ListActiveIncidents", false), "V2 incidents failed");
+    ok &= expect(v2MethodWorks(connection, "ListRootCauseHypotheses", false), "V2 hypotheses failed");
+    ok &= expect(v2MethodWorks(connection, "GetDiagnosis", true), "V2 diagnosis failed");
+    ok &= expect(v2MethodWorks(connection, "GetTopologySummary", true), "V2 topology failed");
     ok &= expect(sendPing(connection), "could not queue active Ping request");
     std::this_thread::sleep_for(200ms);
     ok &= expect(stopAndWait(active_child, SIGTERM, "active-ping"),

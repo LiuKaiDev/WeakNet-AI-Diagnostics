@@ -21,4 +21,13 @@ static constexpr const char kSignalInterfaceChanged[] = "InterfaceChanged"; // �
 static constexpr const char kSignalConnectionModeChanged[] = "ConnectionModeChanged"; // 上网方式变化信号
 static constexpr const char kSignalNetworkQualityChanged[] = "NetworkQualityChanged"; // 网络质量变化信号
 
+// Additive, versioned read-only V2 diagnostic surface.
+static constexpr const char kV2ObjectPath[] = "/com/example/WeakNet/V2";
+static constexpr const char kV2Interface[] = "com.example.WeakNet.Diagnostics2";
+static constexpr const char kV2MethodGetStatus[] = "GetStatus";
+static constexpr const char kV2MethodListActiveIncidents[] = "ListActiveIncidents";
+static constexpr const char kV2MethodListRootCauseHypotheses[] = "ListRootCauseHypotheses";
+static constexpr const char kV2MethodGetDiagnosis[] = "GetDiagnosis";
+static constexpr const char kV2MethodGetTopologySummary[] = "GetTopologySummary";
+
 }  // namespace weaknet_dbus

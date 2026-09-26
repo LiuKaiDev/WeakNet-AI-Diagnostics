@@ -100,6 +100,7 @@ add_library(weaknet_data_plane STATIC
     server/src/socket_route_attributor.cpp
     server/src/incident_engine.cpp
     server/src/root_cause_engine.cpp
+    server/src/diagnostics_query.cpp
     server/src/socket_diag_parser.cpp
     server/src/event_bus.cpp
     server/src/metric_store.cpp
@@ -188,6 +189,11 @@ if(ENABLE_EBPF)
     add_dependencies(weaknet-dbus-server weaknet_bpf)
 endif()
 
+add_executable(weaknetctl client/weaknetctl.cpp)
+target_link_libraries(weaknetctl PRIVATE weaknet_build_options PkgConfig::DBUS)
+target_include_directories(weaknetctl PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/server/include")
+
 add_executable(weaknet-ping-helper server/src/ping_helper_main.cpp)
 target_link_libraries(weaknet-ping-helper PRIVATE weaknet_server_core)
 set_target_properties(weaknet-ping-helper PROPERTIES
@@ -238,6 +244,7 @@ install(TARGETS
     test-client
     example-client
     ping-example
+    weaknetctl
     RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}"
     LIBRARY DESTINATION "${CMAKE_INSTALL_LIBDIR}"
 )

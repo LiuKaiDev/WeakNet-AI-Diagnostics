@@ -43,6 +43,10 @@ weaknet_add_cpp_test(root_cause_engine root_cause_engine_test.cpp)
 target_link_libraries(root_cause_engine PRIVATE weaknet_data_plane)
 set_tests_properties(root_cause_engine PROPERTIES LABELS "phase9")
 
+weaknet_add_cpp_test(diagnostics_query diagnostics_query_test.cpp)
+target_link_libraries(diagnostics_query PRIVATE weaknet_data_plane weaknet_server_core)
+set_tests_properties(diagnostics_query PROPERTIES LABELS "phase10")
+
 weaknet_add_cpp_test(event_bus_concurrency event_bus_test.cpp)
 target_link_libraries(event_bus_concurrency PRIVATE weaknet_data_plane Threads::Threads)
 set_tests_properties(event_bus_concurrency PROPERTIES LABELS "phase3;concurrency")
@@ -116,6 +120,7 @@ set_target_properties(c_header_smoke PROPERTIES
     C_EXTENSIONS NO
 )
 add_test(NAME c_header_smoke COMMAND c_header_smoke)
+add_test(NAME weaknetctl_help COMMAND $<TARGET_FILE:weaknetctl> --help)
 
 weaknet_add_cpp_test(cxx_header_smoke cxx_header_smoke.cpp)
 target_include_directories(cxx_header_smoke PRIVATE "${PROJECT_SOURCE_DIR}/client")

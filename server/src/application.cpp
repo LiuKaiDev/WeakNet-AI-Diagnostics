@@ -233,6 +233,11 @@ bool DaemonApplication::start() {
         v2_adapter_->mirrorCollectorHealth("netlink_topology", v2::CollectorState::Running);
     }
     context_.topology = topology_collector_.get();
+    diagnostics_query_ = std::make_unique<v2::DiagnosticsQueryService>(
+        health_, *incident_engine_, *root_cause_engine_, *topology_collector_);
+    context_.incidents = incident_engine_.get();
+    context_.root_causes = root_cause_engine_.get();
+    context_.diagnostics = diagnostics_query_.get();
     health_.set("v2_data_plane", RuntimeHealthState::Running);
 
     socket_tracker_ = std::make_unique<v2::SocketTracker>(
@@ -368,6 +373,7 @@ void DaemonApplication::stopWorkers() noexcept {
 void DaemonApplication::stopDbus() noexcept {
     if (dbus_path_registered_ && context_.connection) {
         dbus_connection_unregister_object_path(context_.connection, kObjectPath);
+        dbus_connection_unregister_object_path(context_.connection, kV2ObjectPath);
         dbus_path_registered_ = false;
     }
     context_.service = nullptr;
@@ -419,6 +425,10 @@ void DaemonApplication::stop() noexcept {
     context_.weak_mgr = nullptr;
     context_.v2_adapter = nullptr;
     context_.topology = nullptr;
+    context_.incidents = nullptr;
+    context_.root_causes = nullptr;
+    context_.diagnostics = nullptr;
+    diagnostics_query_.reset();
     v2_adapter_.reset();
     topology_collector_.reset();
     socket_tracker_.reset();

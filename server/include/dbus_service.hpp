@@ -41,6 +41,11 @@ public:
     bool handleListInterfaces(DBusConnection* conn, DBusMessage* msg);
     bool handleHealthCheck(DBusConnection* conn, DBusMessage* msg);
     bool handlePing(DBusConnection* conn, DBusMessage* msg);
+    bool handleV2GetStatus(DBusConnection* conn, DBusMessage* msg);
+    bool handleV2ListIncidents(DBusConnection* conn, DBusMessage* msg);
+    bool handleV2ListHypotheses(DBusConnection* conn, DBusMessage* msg);
+    bool handleV2GetDiagnosis(DBusConnection* conn, DBusMessage* msg);
+    bool handleV2GetTopology(DBusConnection* conn, DBusMessage* msg);
     void beginShutdown() noexcept;
 
 private:

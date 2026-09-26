@@ -20,6 +20,7 @@
 #include "socket_tracker.hpp"
 #include "incident_engine.hpp"
 #include "root_cause_engine.hpp"
+#include "diagnostics_query.hpp"
 
 namespace weaknet_dbus {
 
@@ -72,6 +73,7 @@ private:
     std::unique_ptr<v2::SocketRouteAttributor> socket_route_attributor_;
     std::unique_ptr<v2::IncidentEngine> incident_engine_;
     std::unique_ptr<v2::RootCauseEngine> root_cause_engine_;
+    std::unique_ptr<v2::DiagnosticsQueryService> diagnostics_query_;
     std::stop_source stop_source_;
     std::atomic<bool> started_{false};
     std::atomic<bool> stopped_{false};
