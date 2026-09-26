@@ -5,6 +5,7 @@
 #include <linux/inet_diag.h>
 #include <linux/netlink.h>
 #include <linux/sock_diag.h>
+#include <linux/tcp.h>
 #include <netinet/in.h>
 
 #include <cstring>
@@ -33,7 +34,45 @@ bool knownAttribute(std::uint16_t type) {
     }
 }
 
-bool parseAttributes(const std::byte* first, std::size_t length, std::string& error) {
+std::optional<TcpInfoRaw> parseTcpInfo(const std::byte* payload, std::size_t length,
+                                       bool& malformed) {
+    // tcpi_unacked is the first field represented by TcpInfoRaw. A shorter
+    // payload is still safe to receive, but cannot contain a usable prefix.
+    if (length < offsetof(struct tcp_info, tcpi_unacked)) {
+        malformed = true;
+        return std::nullopt;
+    }
+    TcpInfoRaw result;
+    const auto read = [&](auto& destination, std::size_t offset) {
+        using Value = typename std::decay_t<decltype(destination)>::value_type;
+        if (length < offset + sizeof(Value)) return;
+        Value value{};
+        std::memcpy(&value, payload + offset, sizeof(value));
+        destination = value;
+    };
+    read(result.unacked, offsetof(struct tcp_info, tcpi_unacked));
+    read(result.lost, offsetof(struct tcp_info, tcpi_lost));
+    read(result.retrans, offsetof(struct tcp_info, tcpi_retrans));
+    read(result.rtt_us, offsetof(struct tcp_info, tcpi_rtt));
+    read(result.rttvar_us, offsetof(struct tcp_info, tcpi_rttvar));
+    read(result.snd_ssthresh, offsetof(struct tcp_info, tcpi_snd_ssthresh));
+    read(result.snd_cwnd, offsetof(struct tcp_info, tcpi_snd_cwnd));
+    read(result.reordering, offsetof(struct tcp_info, tcpi_reordering));
+    read(result.rcv_space, offsetof(struct tcp_info, tcpi_rcv_space));
+    read(result.total_retrans, offsetof(struct tcp_info, tcpi_total_retrans));
+    read(result.bytes_acked, offsetof(struct tcp_info, tcpi_bytes_acked));
+    read(result.bytes_received, offsetof(struct tcp_info, tcpi_bytes_received));
+    read(result.segs_out, offsetof(struct tcp_info, tcpi_segs_out));
+    read(result.segs_in, offsetof(struct tcp_info, tcpi_segs_in));
+    read(result.data_segs_in, offsetof(struct tcp_info, tcpi_data_segs_in));
+    read(result.data_segs_out, offsetof(struct tcp_info, tcpi_data_segs_out));
+    read(result.delivered, offsetof(struct tcp_info, tcpi_delivered));
+    read(result.delivered_ce, offsetof(struct tcp_info, tcpi_delivered_ce));
+    return result;
+}
+
+bool parseAttributes(const std::byte* first, std::size_t length, std::string& error,
+                     std::optional<TcpInfoRaw>& tcp_info, bool& tcp_info_malformed) {
     while (length != 0) {
         if (length < sizeof(nlattr)) { error = "short sock_diag attribute"; return false; }
         const auto* attribute = reinterpret_cast<const nlattr*>(first);
@@ -42,7 +81,13 @@ bool parseAttributes(const std::byte* first, std::size_t length, std::string& er
         }
         const auto aligned = static_cast<std::size_t>(NLA_ALIGN(attribute->nla_len));
         if (aligned > length) { error = "truncated sock_diag attribute"; return false; }
-        if (knownAttribute(attribute->nla_type) && attribute->nla_len == sizeof(nlattr)) {
+        const auto type = attribute->nla_type & NLA_TYPE_MASK;
+        if (type == INET_DIAG_INFO) {
+            bool malformed = false;
+            tcp_info = parseTcpInfo(reinterpret_cast<const std::byte*>(attribute) + sizeof(nlattr),
+                                    attribute->nla_len - sizeof(nlattr), malformed);
+            tcp_info_malformed = malformed;
+        } else if (knownAttribute(attribute->nla_type) && attribute->nla_len == sizeof(nlattr)) {
             error = "empty known sock_diag attribute"; return false;
         }
         first += aligned;
@@ -128,11 +173,16 @@ SocketDiagParseResult SocketDiagParser::parse(const void* data, std::size_t size
             if (message->idiag_family != AF_INET && message->idiag_family != AF_INET6) {
                 result.malformed = true; result.error = "unsupported inet_diag family"; break;
             }
+            bool tcp_info_malformed = false;
+            std::optional<TcpInfoRaw> tcp_info;
             if (!parseAttributes(reinterpret_cast<const std::byte*>(message) + sizeof(inet_diag_msg),
-                                 NLMSG_PAYLOAD(header, 0) - sizeof(inet_diag_msg), result.error)) {
+                                 NLMSG_PAYLOAD(header, 0) - sizeof(inet_diag_msg), result.error,
+                                 tcp_info, tcp_info_malformed)) {
                 result.malformed = true; break;
             }
             parsed.socket = parseSocket(*message, netns);
+            parsed.socket->tcp_info = std::move(tcp_info);
+            parsed.socket->tcp_info_malformed = tcp_info_malformed;
             result.messages.push_back(std::move(parsed));
         } else {
             result.malformed = true;

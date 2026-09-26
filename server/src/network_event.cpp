@@ -29,6 +29,8 @@ EventKind NetworkEvent::kindFor(const NetworkEventPayload& payload) noexcept {
         if constexpr (std::is_same_v<T, TrafficObservation>) return EventKind::TrafficMetric;
         if constexpr (std::is_same_v<T, WifiRssiObservation>) return EventKind::WifiRssiMetric;
         if constexpr (std::is_same_v<T, SocketObservation>) return EventKind::SocketObservation;
+        if constexpr (std::is_same_v<T, TcpInfoObservation>) return EventKind::TcpInfoObservation;
+        if constexpr (std::is_same_v<T, TcpIntervalMetrics>) return EventKind::TcpIntervalMetric;
         return EventKind::CollectorHealth;
     }, payload);
 }
@@ -57,6 +59,19 @@ NetworkEvent::NetworkEvent(NetworkEventHeader header, NetworkEventPayload payloa
             throw std::invalid_argument("SocketObservation namespace/identity mismatch");
         }
     }
+    if (const auto* tcp = std::get_if<TcpInfoObservation>(&payload_)) {
+        if (tcp->netns != header_.netns || tcp->id.netns != header_.netns ||
+            tcp->tuple.netns != header_.netns ||
+            (header_.socket && *header_.socket != tcp->id)) {
+            throw std::invalid_argument("TcpInfoObservation namespace/identity mismatch");
+        }
+    }
+    if (const auto* interval = std::get_if<TcpIntervalMetrics>(&payload_)) {
+        if (interval->id.netns != header_.netns ||
+            (header_.socket && *header_.socket != interval->id)) {
+            throw std::invalid_argument("TcpIntervalMetrics namespace/identity mismatch");
+        }
+    }
     if (header_.kind != kindFor(payload_)) {
         throw std::invalid_argument("NetworkEvent header kind does not match payload");
     }
@@ -76,6 +91,8 @@ bool NetworkEvent::replaceable() const noexcept {
         case EventKind::UplinkObservation:
         case EventKind::CollectorHealth:
         case EventKind::SocketObservation:
+        case EventKind::TcpInfoObservation:
+        case EventKind::TcpIntervalMetric:
             return false;
     }
     return false;

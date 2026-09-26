@@ -127,6 +127,8 @@ enum class EventKind : std::uint8_t {
     WifiRssiMetric,
     CollectorHealth,
     SocketObservation,
+    TcpInfoObservation,
+    TcpIntervalMetric,
 };
 
 enum class EventSource : std::uint8_t {
@@ -146,6 +148,30 @@ enum class SocketLifecycleState : std::uint8_t {
     Closed,
 };
 
+struct TcpInfoRaw {
+    // Gauges. Values retain Linux tcp_info units (microseconds/counts).
+    std::optional<std::uint32_t> rtt_us;
+    std::optional<std::uint32_t> rttvar_us;
+    std::optional<std::uint32_t> snd_cwnd;
+    std::optional<std::uint32_t> snd_ssthresh;
+    std::optional<std::uint32_t> unacked;
+    std::optional<std::uint32_t> reordering;
+    std::optional<std::uint32_t> rcv_space;
+
+    // Cumulative counters. They are never treated as gauges.
+    std::optional<std::uint64_t> bytes_acked;
+    std::optional<std::uint64_t> bytes_received;
+    std::optional<std::uint32_t> segs_out;
+    std::optional<std::uint32_t> segs_in;
+    std::optional<std::uint32_t> data_segs_out;
+    std::optional<std::uint32_t> data_segs_in;
+    std::optional<std::uint32_t> total_retrans;
+    std::optional<std::uint32_t> lost;
+    std::optional<std::uint32_t> retrans;
+    std::optional<std::uint32_t> delivered;
+    std::optional<std::uint32_t> delivered_ce;
+};
+
 struct SocketObservation {
     SocketId id;
     NetnsId netns;
@@ -158,7 +184,56 @@ struct SocketObservation {
     bool present{true};
     TcpSocketState tcp_state{};
     std::optional<std::uint32_t> diag_ifindex;
+    std::optional<TcpInfoRaw> tcp_info;
+    bool tcp_info_malformed{false};
 };
+
+struct TcpInfoObservation {
+    SocketId id;
+    NetnsId netns;
+    SocketTuple tuple;
+    TcpSocketState tcp_state{};
+    std::optional<TcpInfoRaw> raw;
+    RealtimeTime observed_at{};
+    MonotonicTime monotonic_at{};
+    Validity validity{Validity::Unavailable};
+    bool malformed{false};
+};
+
+enum class TcpMetricUnavailableReason : std::uint8_t {
+    NoPreviousSample,
+    IdentityChanged,
+    GenerationChanged,
+    FieldUnavailable,
+    CounterReset,
+    NonIncreasingTimestamp,
+    ZeroDenominator,
+    PartialObservation,
+};
+
+struct TcpIntervalMetrics {
+    SocketId id;
+    MonotonicTime interval_start{};
+    MonotonicTime interval_end{};
+    double elapsed_seconds{};
+    std::optional<std::uint32_t> rtt_us;
+    std::optional<std::uint32_t> rttvar_us;
+    std::optional<std::uint32_t> snd_cwnd;
+    std::optional<std::uint32_t> snd_ssthresh;
+    std::optional<double> tx_acked_bytes_per_sec;
+    std::optional<double> rx_bytes_per_sec;
+    std::optional<double> segs_out_per_sec;
+    std::optional<double> segs_in_per_sec;
+    std::optional<double> data_segs_out_per_sec;
+    std::optional<double> data_segs_in_per_sec;
+    std::optional<std::uint64_t> delta_total_retrans;
+    std::optional<double> retransmission_segment_ratio;
+    Validity validity{Validity::Valid};
+    std::optional<TcpMetricUnavailableReason> unavailable_reason;
+};
+
+using TcpObservation = TcpInfoObservation;
+using TcpIntervalObservation = TcpIntervalMetrics;
 
 struct InterfaceObservation {
     std::string interface_name;
@@ -229,7 +304,8 @@ struct CollectorHealthObservation {
 using NetworkEventPayload = std::variant<
     LinkObservation, AddressObservation, RouteObservation, InterfaceObservation, UplinkObservation, ProbeRttObservation,
     TcpLossObservation, TrafficObservation, WifiRssiObservation,
-    CollectorHealthObservation, SocketObservation>;
+    CollectorHealthObservation, SocketObservation, TcpInfoObservation,
+    TcpIntervalMetrics>;
 
 struct NetworkEventHeader {
     std::uint16_t schema_version{kNetworkEventSchemaVersion};

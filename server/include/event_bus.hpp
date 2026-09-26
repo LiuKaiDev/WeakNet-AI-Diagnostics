@@ -28,9 +28,9 @@ struct EventBusTelemetry {
     std::uint64_t total_drops{};
     std::uint64_t total_coalesces{};
     std::uint64_t callback_failures{};
-    std::array<std::uint64_t, 10> accepted_by_kind{};
-    std::array<std::uint64_t, 10> dropped_by_kind{};
-    std::array<std::uint64_t, 8> accepted_by_source{};
+    std::array<std::uint64_t, 13> accepted_by_kind{};
+    std::array<std::uint64_t, 13> dropped_by_kind{};
+    std::array<std::uint64_t, 9> accepted_by_source{};
 };
 
 struct PublishResult {

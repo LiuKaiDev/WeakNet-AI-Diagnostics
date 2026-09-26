@@ -92,8 +92,9 @@ state, `idiag_if`, and the two-word kernel cookie. Linux stores the native
 low 32 bits in word 0 and high 32 bits in word 1, so they are combined as
 `word0 | (word1 << 32)` without byte-order conversion. Two
 `INET_DIAG_NOCOOKIE` words mean unavailable while
-zero remains valid. Unknown attributes are ignored; malformed known attributes
-reject the candidate. TCP state is metadata only. `idiag_if` is retained as
+zero remains valid. Unknown attributes are ignored; malformed inventory
+attributes reject the candidate, while malformed optional TCP_INFO is marked
+unavailable for that socket. TCP state is metadata only. `idiag_if` is retained as
 `diag_ifindex` evidence, not routed egress or selected uplink attribution.
 
 IPv4 and IPv6 dumps are transactional: both must complete before observations
@@ -107,10 +108,50 @@ partial table. The one socket observes only its creation namespace; traversal
 of other namespaces is future work. Inventory cadence is five seconds and is
 not a TCP metric cadence.
 
+## Phase 5.3 TCP_INFO semantic model and interval metrics
+
+The same `SocketTracker` dump requests `INET_DIAG_INFO`; no second socket dump
+pipeline is introduced. The `INET_DIAG_INFO` attribute is treated as a bounded
+byte payload. Known `struct tcp_info` fields are copied individually only when
+`payload_size >= offsetof(field) + sizeof(field)`. Shorter kernel payloads keep
+later fields unavailable, while larger payloads safely ignore unknown tail
+bytes. A malformed TCP_INFO attribute marks TCP telemetry unavailable for that
+socket but does not discard otherwise valid socket inventory.
+
+`TcpInfoRaw` uses optionals so an observed zero remains available zero and an
+absent field is not silently filled with zero. RTT and RTT variance (`rtt_us`
+and `rttvar_us`) are current gauges in microseconds. Congestion window,
+slow-start threshold, unacked, reordering, and receive-space values are current
+gauges/counts. Bytes, segment, and retransmission fields are cumulative
+counters. The collector does not delta gauges.
+
+Interval metrics are derived only for exactly the same `SocketId`, including
+the same lifecycle generation, with strictly increasing monotonic timestamps
+and compatible available counters. Counter decreases are treated as resets;
+wrap is not guessed. Missing fields, identity changes, non-increasing
+timestamps, and zero denominators produce unavailable fields/reasons rather
+than zero or negative rates.
+
+The current metric set is deliberately small: TCP-estimated `rtt_us` and
+`rttvar_us`, `snd_cwnd`/`snd_ssthresh`, acked/received byte rates, segment and
+data-segment rates, `delta_total_retrans`, and
+`delta_total_retrans / delta_data_segs_out` named as a retransmission-segment
+ratio. That ratio is not a packet-loss rate; repeated retransmissions may make
+it exceed one. A zero data-segment delta makes the ratio unavailable.
+
+The successful five-second authoritative inventory cycle is also the initial
+TCP sampling point. Failed or partial IPv4/IPv6 reconciliation does not alter
+lifecycle state or TCP baselines and emits no interval metrics. Baselines are
+bounded by active `SocketId` state; disappearance removes a baseline and a new
+generation starts with a baseline-only observation. Raw TCP observations and
+valid interval metrics are published through typed EventBus payloads and valid
+values are stored in MetricStore with socket identity and interval duration.
+
+Interface/egress attribution and route correlation are deferred to Phase 5.4.
+
 ## Deferred work
 
-Phase 5.3 handles TCP_INFO field semantics/version availability, same-identity
-interval deltas, and retransmission/RTT metric definitions. This phase does
-not calculate TCP metrics, parse TCP_INFO deeply, attribute routed egress,
-attribute processes/cgroups, correlate eBPF, traverse namespaces, or replace
-the V1 TCP monitor.
+Phase 5.4 handles interface/egress attribution and route correlation. This
+phase does not implement process/cgroup attribution, eBPF correlation, packet
+capture, active-probe or Wi-Fi redesign, IncidentEngine, RootCauseEngine, V2
+D-Bus, weaknetctl, or V1 TCP migration.

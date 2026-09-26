@@ -27,6 +27,18 @@ enum class MetricName : std::uint8_t {
     TrafficPacketsPerSecond,
     TrafficActiveFlows,
     WifiRssi,
+    TcpRttUs,
+    TcpRttvarUs,
+    TcpSndCwnd,
+    TcpSndSsthresh,
+    TcpTxAckedBytesPerSecond,
+    TcpRxBytesPerSecond,
+    TcpSegsOutPerSecond,
+    TcpSegsInPerSecond,
+    TcpDataSegsOutPerSecond,
+    TcpDataSegsInPerSecond,
+    TcpDeltaTotalRetrans,
+    TcpRetransmissionSegmentRatio,
 };
 
 enum class MetricUnit : std::uint8_t {
@@ -36,6 +48,9 @@ enum class MetricUnit : std::uint8_t {
     PacketsPerSecond,
     Count,
     DecibelMilliwatts,
+    Microseconds,
+    SegmentsPerSecond,
+    Ratio,
 };
 
 using MetricValue = std::variant<std::int64_t, std::uint64_t, double>;

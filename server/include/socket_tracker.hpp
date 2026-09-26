@@ -19,6 +19,7 @@
 #include "socket_diag_parser.hpp"
 #include "event_bus.hpp"
 #include "clock.hpp"
+#include "metric_store.hpp"
 #include "scoped_fd.hpp"
 
 namespace weaknet_dbus::v2 {
@@ -39,6 +40,8 @@ struct SocketObservationInput {
     bool present{true};
     TcpSocketState tcp_state{};
     std::optional<std::uint32_t> diag_ifindex;
+    std::optional<TcpInfoRaw> tcp_info;
+    bool tcp_info_malformed{false};
 };
 
 struct SocketResolution {
@@ -126,6 +129,16 @@ struct SocketTrackerTelemetry {
     std::uint64_t parsed_socket_count{};
     std::uint64_t authoritative_commits{};
     std::uint64_t capacity_exhaustions{};
+    std::uint64_t tcp_info_attributes_seen{};
+    std::uint64_t tcp_info_unavailable{};
+    std::uint64_t tcp_info_malformed{};
+    std::uint64_t interval_baselines_created{};
+    std::uint64_t valid_intervals_computed{};
+    std::uint64_t intervals_identity_rejected{};
+    std::uint64_t intervals_field_unavailable{};
+    std::uint64_t intervals_counter_reset{};
+    std::uint64_t intervals_zero_denominator{};
+    std::uint64_t intervals_timestamp_rejected{};
     std::size_t active_socket_count{};
     bool degraded{false};
     std::string last_error;
@@ -139,13 +152,24 @@ struct SocketTrackerTestHooks {
     std::chrono::milliseconds recovery_retry_max{std::chrono::seconds(5)};
 };
 
+struct TcpIntervalResult {
+    std::optional<TcpIntervalMetrics> metrics;
+    std::optional<TcpMetricUnavailableReason> reason;
+};
+
+class TcpIntervalCalculator {
+public:
+    static TcpIntervalResult calculate(const TcpInfoObservation& previous,
+                                       const TcpInfoObservation& current);
+};
+
 class SocketTracker {
 public:
     static constexpr auto kInventoryInterval = std::chrono::seconds(5);
     SocketTracker(EventBus& bus, const Clock& clock, NetnsId netns,
                   SocketLifecycleConfig lifecycle_config = {},
                   std::chrono::milliseconds interval = kInventoryInterval,
-                  SocketTrackerTestHooks hooks = {});
+                  SocketTrackerTestHooks hooks = {}, MetricStore* metrics = nullptr);
     ~SocketTracker();
     SocketTracker(const SocketTracker&) = delete;
     SocketTracker& operator=(const SocketTracker&) = delete;
@@ -168,6 +192,7 @@ private:
                           const std::vector<SocketObservation>& closed);
 
     EventBus& bus_;
+    MetricStore* metrics_;
     const Clock& clock_;
     NetnsId netns_;
     SocketLifecycleTable lifecycle_;
@@ -175,11 +200,13 @@ private:
     SocketTrackerTestHooks hooks_;
     mutable std::mutex mutex_;
     mutable std::mutex lifecycle_mutex_;
+    std::map<SocketId, TcpInfoObservation> tcp_baselines_;
     SocketTrackerTelemetry telemetry_;
     std::jthread worker_;
     std::atomic<bool> running_{false};
     ::weaknet_dbus::ScopedFd socket_;
     std::atomic<std::uint64_t> next_event_id_{1};
+    std::atomic<std::uint64_t> next_sample_id_{1};
 };
 
 }  // namespace weaknet_dbus::v2

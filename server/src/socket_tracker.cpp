@@ -51,14 +51,96 @@ SocketObservation SocketLifecycleTable::makeObservation(
     const SocketId& id, const SocketObservationInput& input) const {
     return SocketObservation{id, input.tuple.netns, input.tuple, input.observed_at, input.monotonic_at,
                              input.source, input.validity, SocketLifecycleState::Active, true,
-                             input.tcp_state, input.diag_ifindex};
+                             input.tcp_state, input.diag_ifindex, input.tcp_info,
+                             input.tcp_info_malformed};
+}
+
+TcpIntervalResult TcpIntervalCalculator::calculate(const TcpInfoObservation& previous,
+                                                   const TcpInfoObservation& current) {
+    if (previous.id != current.id) {
+        return {std::nullopt,
+                previous.id.netns == current.id.netns && previous.id.cookie == current.id.cookie
+                    ? std::optional<TcpMetricUnavailableReason>(TcpMetricUnavailableReason::GenerationChanged)
+                    : std::optional<TcpMetricUnavailableReason>(TcpMetricUnavailableReason::IdentityChanged)};
+    }
+    if (current.monotonic_at <= previous.monotonic_at) {
+        return {std::nullopt, TcpMetricUnavailableReason::NonIncreasingTimestamp};
+    }
+    if (previous.validity != Validity::Valid || current.validity != Validity::Valid ||
+        previous.malformed || current.malformed || !previous.raw || !current.raw) {
+        return {std::nullopt, TcpMetricUnavailableReason::FieldUnavailable};
+    }
+
+    TcpIntervalMetrics metrics;
+    metrics.id = current.id;
+    metrics.interval_start = previous.monotonic_at;
+    metrics.interval_end = current.monotonic_at;
+    metrics.elapsed_seconds = std::chrono::duration<double>(
+        current.monotonic_at - previous.monotonic_at).count();
+    metrics.rtt_us = current.raw->rtt_us;
+    metrics.rttvar_us = current.raw->rttvar_us;
+    metrics.snd_cwnd = current.raw->snd_cwnd;
+    metrics.snd_ssthresh = current.raw->snd_ssthresh;
+    bool has_metric = metrics.rtt_us || metrics.rttvar_us || metrics.snd_cwnd || metrics.snd_ssthresh;
+    bool counter_reset = false;
+    bool zero_denominator = false;
+
+    const auto rate = [&](const auto& before, const auto& after, auto& destination) {
+        if (!before || !after) return std::optional<std::uint64_t>{};
+        if (*after < *before) { counter_reset = true; return std::optional<std::uint64_t>{}; }
+        const auto delta = static_cast<std::uint64_t>(*after) - static_cast<std::uint64_t>(*before);
+        destination = static_cast<double>(delta) / metrics.elapsed_seconds;
+        has_metric = true;
+        return std::optional<std::uint64_t>(delta);
+    };
+    const auto acked = rate(previous.raw->bytes_acked, current.raw->bytes_acked,
+                            metrics.tx_acked_bytes_per_sec);
+    const auto received = rate(previous.raw->bytes_received, current.raw->bytes_received,
+                               metrics.rx_bytes_per_sec);
+    const auto segs_out = rate(previous.raw->segs_out, current.raw->segs_out,
+                               metrics.segs_out_per_sec);
+    const auto segs_in = rate(previous.raw->segs_in, current.raw->segs_in,
+                              metrics.segs_in_per_sec);
+    const auto data_out = rate(previous.raw->data_segs_out, current.raw->data_segs_out,
+                               metrics.data_segs_out_per_sec);
+    const auto data_in = rate(previous.raw->data_segs_in, current.raw->data_segs_in,
+                              metrics.data_segs_in_per_sec);
+    (void)acked; (void)received; (void)segs_out; (void)segs_in; (void)data_in;
+
+    if (previous.raw->total_retrans && current.raw->total_retrans) {
+        if (*current.raw->total_retrans < *previous.raw->total_retrans) {
+            counter_reset = true;
+        } else {
+            metrics.delta_total_retrans = static_cast<std::uint64_t>(*current.raw->total_retrans) -
+                                          static_cast<std::uint64_t>(*previous.raw->total_retrans);
+            has_metric = true;
+        }
+    }
+    if (data_out && metrics.delta_total_retrans) {
+        if (*data_out == 0) zero_denominator = true;
+        else metrics.retransmission_segment_ratio =
+            static_cast<double>(*metrics.delta_total_retrans) / static_cast<double>(*data_out);
+    }
+    if (!has_metric) {
+        return {std::nullopt, counter_reset ? std::optional<TcpMetricUnavailableReason>(TcpMetricUnavailableReason::CounterReset)
+                            : zero_denominator ? std::optional<TcpMetricUnavailableReason>(TcpMetricUnavailableReason::ZeroDenominator)
+                                               : std::optional<TcpMetricUnavailableReason>(TcpMetricUnavailableReason::FieldUnavailable)};
+    }
+    if (counter_reset) {
+        metrics.unavailable_reason = TcpMetricUnavailableReason::CounterReset;
+        metrics.validity = Validity::Partial;
+    } else if (zero_denominator) {
+        metrics.unavailable_reason = TcpMetricUnavailableReason::ZeroDenominator;
+        metrics.validity = Validity::Partial;
+    }
+    return {std::move(metrics), std::nullopt};
 }
 
 SocketTracker::SocketTracker(EventBus& bus, const Clock& clock, NetnsId netns,
                              SocketLifecycleConfig lifecycle_config,
                              std::chrono::milliseconds interval,
-                             SocketTrackerTestHooks hooks)
-    : bus_(bus), clock_(clock), netns_(netns), lifecycle_(lifecycle_config),
+                             SocketTrackerTestHooks hooks, MetricStore* metrics)
+    : bus_(bus), metrics_(metrics), clock_(clock), netns_(netns), lifecycle_(lifecycle_config),
       interval_(interval), hooks_(std::move(hooks)) {
     if (netns_.inode == 0 || interval_ <= std::chrono::milliseconds::zero() ||
         hooks_.recovery_retry_initial <= std::chrono::milliseconds::zero() ||
@@ -121,6 +203,7 @@ bool SocketTracker::dumpFamily(std::uint8_t family, std::vector<SocketDiagRecord
     inet_diag_req_v2 request{};
     request.sdiag_family = family;
     request.sdiag_protocol = IPPROTO_TCP;
+    request.idiag_ext = static_cast<std::uint8_t>(1U << (INET_DIAG_INFO - 1));
     request.idiag_states = 0xffffffffU;
     nlmsghdr header{};
     header.nlmsg_len = NLMSG_LENGTH(sizeof(request));
@@ -207,6 +290,8 @@ bool SocketTracker::reconcile(std::stop_token token) {
             input.tuple = record.tuple; input.cookie = record.cookie;
             input.observed_at = clock_.realtimeNow(); input.monotonic_at = clock_.monotonicNow();
             input.tcp_state = record.tcp_state; input.diag_ifindex = record.diag_ifindex;
+            input.tcp_info = record.tcp_info;
+            input.tcp_info_malformed = record.tcp_info_malformed;
             if (!lifecycle_.observe(input)) { accepted = false; break; }
         }
         if (!accepted) {
@@ -259,6 +344,133 @@ void SocketTracker::publishCommitted(const std::vector<SocketObservation>& befor
     };
     for (const auto& item : after) if (changed(item)) publish(item);
     for (const auto& item : closed) publish(item);
+
+    std::vector<TcpInfoObservation> raw_events;
+    std::vector<TcpIntervalMetrics> interval_events;
+    const auto recordReason = [&](TcpMetricUnavailableReason reason) {
+        std::lock_guard lock(mutex_);
+        switch (reason) {
+            case TcpMetricUnavailableReason::IdentityChanged:
+            case TcpMetricUnavailableReason::GenerationChanged:
+                ++telemetry_.intervals_identity_rejected; break;
+            case TcpMetricUnavailableReason::FieldUnavailable:
+            case TcpMetricUnavailableReason::NoPreviousSample:
+            case TcpMetricUnavailableReason::PartialObservation:
+                ++telemetry_.intervals_field_unavailable; break;
+            case TcpMetricUnavailableReason::CounterReset:
+                ++telemetry_.intervals_counter_reset; break;
+            case TcpMetricUnavailableReason::ZeroDenominator:
+                ++telemetry_.intervals_zero_denominator; break;
+            case TcpMetricUnavailableReason::NonIncreasingTimestamp:
+                ++telemetry_.intervals_timestamp_rejected; break;
+        }
+    };
+    {
+        std::lock_guard lifecycle_lock(lifecycle_mutex_);
+        for (auto iterator = tcp_baselines_.begin(); iterator != tcp_baselines_.end();) {
+            const auto found = std::find_if(after.begin(), after.end(),
+                [&](const auto& value) { return value.id == iterator->first; });
+            if (found == after.end() || !found->tcp_info) iterator = tcp_baselines_.erase(iterator);
+            else ++iterator;
+        }
+        for (const auto& item : after) {
+            TcpInfoObservation current{item.id, item.netns, item.tuple, item.tcp_state,
+                                       item.tcp_info, item.observed_at, item.monotonic_at,
+                                       item.tcp_info ? Validity::Valid : Validity::Unavailable,
+                                       item.tcp_info_malformed};
+            raw_events.push_back(current);
+            if (!current.raw) {
+                std::lock_guard lock(mutex_);
+                if (current.malformed) ++telemetry_.tcp_info_attributes_seen;
+                ++telemetry_.tcp_info_unavailable;
+                if (current.malformed) ++telemetry_.tcp_info_malformed;
+                continue;
+            }
+            {
+                std::lock_guard lock(mutex_);
+                ++telemetry_.tcp_info_attributes_seen;
+            }
+            const auto previous = tcp_baselines_.find(current.id);
+            if (previous == tcp_baselines_.end()) {
+                tcp_baselines_[current.id] = current;
+                std::lock_guard lock(mutex_);
+                ++telemetry_.interval_baselines_created;
+                continue;
+            }
+            const auto result = TcpIntervalCalculator::calculate(previous->second, current);
+            if (result.metrics) {
+                interval_events.push_back(*result.metrics);
+                if (result.metrics->validity == Validity::Valid) {
+                    std::lock_guard lock(mutex_);
+                    ++telemetry_.valid_intervals_computed;
+                }
+                if (result.metrics->unavailable_reason) {
+                    recordReason(*result.metrics->unavailable_reason);
+                }
+            } else if (result.reason) {
+                recordReason(*result.reason);
+            }
+            tcp_baselines_[current.id] = current;
+        }
+    }
+    for (const auto& observation : raw_events) {
+        NetworkEventHeader header{kNetworkEventSchemaVersion,
+            EventId{next_event_id_.fetch_add(1)}, {}, EventKind::TcpInfoObservation,
+            EventSource::SocketTracker, observation.observed_at, observation.monotonic_at,
+            observation.netns, std::nullopt, observation.id, observation.validity, std::nullopt};
+        (void)bus_.publish(NetworkEvent(std::move(header), observation));
+    }
+    for (const auto& metrics : interval_events) {
+        const auto elapsed_ms = static_cast<std::uint64_t>(
+            std::chrono::duration_cast<std::chrono::milliseconds>(
+                metrics.interval_end - metrics.interval_start).count());
+        const auto realtime = clock_.realtimeNow();
+        NetworkEventHeader header{kNetworkEventSchemaVersion,
+            EventId{next_event_id_.fetch_add(1)}, {}, EventKind::TcpIntervalMetric,
+            EventSource::SocketTracker, realtime, metrics.interval_end,
+            metrics.id.netns, std::nullopt, metrics.id, metrics.validity, std::nullopt};
+        (void)bus_.publish(NetworkEvent(std::move(header), metrics));
+        if (!metrics_) continue;
+        const auto store = [&](MetricName name, MetricUnit unit, MetricValue value) {
+            MetricKey key{metrics.id.netns, name, unit, EventSource::SocketTracker,
+                          std::nullopt, metrics.id, elapsed_ms};
+            metrics_->insert(MetricSample{SampleId{next_sample_id_.fetch_add(1)},
+                                          std::move(key), std::move(value), metrics.validity,
+                                          realtime, metrics.interval_end, std::nullopt});
+        };
+        if (metrics.rtt_us) store(MetricName::TcpRttUs, MetricUnit::Microseconds,
+                                  static_cast<std::uint64_t>(*metrics.rtt_us));
+        if (metrics.rttvar_us) store(MetricName::TcpRttvarUs, MetricUnit::Microseconds,
+                                     static_cast<std::uint64_t>(*metrics.rttvar_us));
+        if (metrics.snd_cwnd) store(MetricName::TcpSndCwnd, MetricUnit::Count,
+                                    static_cast<std::uint64_t>(*metrics.snd_cwnd));
+        if (metrics.snd_ssthresh) store(MetricName::TcpSndSsthresh, MetricUnit::Count,
+                                        static_cast<std::uint64_t>(*metrics.snd_ssthresh));
+        if (metrics.tx_acked_bytes_per_sec) store(MetricName::TcpTxAckedBytesPerSecond,
+                                                  MetricUnit::BytesPerSecond,
+                                                  *metrics.tx_acked_bytes_per_sec);
+        if (metrics.rx_bytes_per_sec) store(MetricName::TcpRxBytesPerSecond,
+                                            MetricUnit::BytesPerSecond,
+                                            *metrics.rx_bytes_per_sec);
+        if (metrics.segs_out_per_sec) store(MetricName::TcpSegsOutPerSecond,
+                                            MetricUnit::SegmentsPerSecond,
+                                            *metrics.segs_out_per_sec);
+        if (metrics.segs_in_per_sec) store(MetricName::TcpSegsInPerSecond,
+                                           MetricUnit::SegmentsPerSecond,
+                                           *metrics.segs_in_per_sec);
+        if (metrics.data_segs_out_per_sec) store(MetricName::TcpDataSegsOutPerSecond,
+                                                 MetricUnit::SegmentsPerSecond,
+                                                 *metrics.data_segs_out_per_sec);
+        if (metrics.data_segs_in_per_sec) store(MetricName::TcpDataSegsInPerSecond,
+                                                MetricUnit::SegmentsPerSecond,
+                                                *metrics.data_segs_in_per_sec);
+        if (metrics.delta_total_retrans) store(MetricName::TcpDeltaTotalRetrans,
+                                               MetricUnit::Count,
+                                               static_cast<std::uint64_t>(*metrics.delta_total_retrans));
+        if (metrics.retransmission_segment_ratio) store(
+            MetricName::TcpRetransmissionSegmentRatio, MetricUnit::Ratio,
+            *metrics.retransmission_segment_ratio);
+    }
 }
 
 bool SocketTracker::start() {

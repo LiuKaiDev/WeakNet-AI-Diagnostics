@@ -17,6 +17,8 @@ struct SocketDiagRecord {
     std::optional<std::uint32_t> diag_ifindex;
     std::optional<std::uint32_t> uid;
     std::optional<std::uint32_t> inode;
+    std::optional<TcpInfoRaw> tcp_info;
+    bool tcp_info_malformed{false};
 };
 
 enum class SocketDiagMessageKind : std::uint8_t { Socket, Done, Error };

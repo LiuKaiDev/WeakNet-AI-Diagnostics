@@ -182,11 +182,12 @@ Tests:
 
 ## Phase 5: SocketTracker and trustworthy TCP metrics
 
-Status: Phase 5.1 and the authorized Phase 5.2 inventory increment are
-implemented. Socket identity, cookie/tuple semantics, bounded lifecycle
-reconciliation, and transactional IPv4+IPv6 NETLINK_SOCK_DIAG snapshots are
-present; TCP_INFO sampling and interval metrics are not implemented. TCP state
-and `idiag_if` remain metadata, not metric or routed-egress attribution.
+Status: Phase 5.1, Phase 5.2 inventory, and the authorized Phase 5.3 TCP_INFO
+increment are implemented. Socket identity, transactional IPv4+IPv6
+NETLINK_SOCK_DIAG snapshots, variable-size TCP_INFO parsing, and same-generation
+interval metrics are present. TCP state and `idiag_if` remain metadata, not
+routed-egress attribution. Interface/egress attribution and route correlation
+remain deferred to Phase 5.4.
 
 Objective: turn existing sock_diag/TCP_INFO inspection into stable per-socket observability.
 
@@ -195,8 +196,8 @@ Scope:
 - define `SocketId` and socket generation rules using netns/socket cookie where supported;
 - enumerate IPv4/IPv6 TCP sockets and maintain lifecycle state;
 - record TCP_INFO field availability per kernel and calculate only valid compatible deltas;
-- derive interface attribution with documented evidence/fallbacks rather than treating `idiag_if` as routed egress;
-- reset baselines on socket/interface/generation changes and counter reset/wrap;
+- retain TCP_INFO field availability across kernel payload sizes;
+- reset baselines on socket/generation changes and counter resets;
 - publish socket lifecycle/TCP metric events and store bounded history;
 - retire the V1 aggregate “TCP loss” implementation after compatibility output is mapped to valid data or marked unavailable.
 
@@ -213,7 +214,7 @@ Tests:
 
 - recorded sock_diag/TCP_INFO fixtures for field variants and malformed messages;
 - counter delta/reset/wrap and socket-generation unit tests;
-- namespace tests with multiple TCP flows, tuple reuse, interface binding, routed sockets, and one impaired endpoint;
+- namespace tests with multiple TCP flows, tuple reuse, and one impaired endpoint;
 - comparison assertions against controlled application byte/counter behavior (with tolerances defined before running);
 - permission-denied/degraded tests.
 

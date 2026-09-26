@@ -233,7 +233,7 @@ bool DaemonApplication::start() {
 
     socket_tracker_ = std::make_unique<v2::SocketTracker>(
         event_bus_, clock_, *netns, v2::SocketLifecycleConfig{},
-        v2::SocketTracker::kInventoryInterval, test_hooks_.socket_tracker);
+        v2::SocketTracker::kInventoryInterval, test_hooks_.socket_tracker, &metric_store_);
     if (!socket_tracker_->start()) {
         health_.set("socket_tracker", RuntimeHealthState::Degraded,
                     "transport_or_worker_start_failed");

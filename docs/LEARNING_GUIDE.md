@@ -21,14 +21,16 @@ Phase 1 through Phase 3 are now the implemented baseline. The top-level `CMakeLi
 - exact Phase 3 semantics in `docs/PHASE3_DATA_PLANE.md`.
 - the Phase 4 `netlink_parser.hpp`, `netlink_topology.hpp`, and `netlink_collector.hpp` path with deterministic parser/policy tests;
 - exact Phase 4 semantics in `docs/PHASE4_NETLINK.md`.
-- the Phase 5.1/5.2 `socket_tracker.hpp`/`socket_tracker.cpp` and
-  `socket_diag_parser.hpp` path with deterministic identity, lifecycle, and
-  NETLINK_SOCK_DIAG inventory semantics;
+- the Phase 5.1–5.3 `socket_tracker.hpp`/`socket_tracker.cpp` and
+  `socket_diag_parser.hpp` path with deterministic identity, lifecycle,
+  NETLINK_SOCK_DIAG inventory, variable-size TCP_INFO, and interval-metric
+  semantics;
 - exact Phase 5.1 semantics in `docs/PHASE5_SOCKET_TRACKER.md`.
 
 The later names `weaknetd` and `weaknetctl`, plus IncidentEngine and
 RootCauseEngine, remain target architecture. SocketTracker now provides the
-Phase 5.2 inventory path, while TCP_INFO metrics remain deferred.
+Phase 5.3 TCP_INFO metric path; Phase 5.4 interface/egress and route
+correlation remain deferred.
 Read `server/src/application.cpp` after the Phase 1 targets, then read
 `docs/PHASE2_RUNTIME.md`, `docs/PHASE3_DATA_PLANE.md`,
 `docs/PHASE4_NETLINK.md`, and `docs/PHASE5_SOCKET_TRACKER.md`; use later
@@ -178,13 +180,12 @@ payload; this phase intentionally emits no live socket events.
 
 Read socket identity/generation before reading metric calculations. Trace:
 
-1. sock_diag request and response parsing;
+1. sock_diag request, `INET_DIAG_INFO`, and response parsing;
 2. cookie/netns/tuple identity;
 3. socket create/update/close reconciliation;
-4. field-availability checks;
-5. compatible monotonic counter deltas;
-6. interface/process/cgroup attribution and its confidence;
-7. emitted socket/TCP events.
+4. field-size/version availability checks;
+5. compatible monotonic counter deltas and reset handling;
+6. emitted raw socket/TCP events and MetricStore samples.
 
 Pay special attention to fields that are gauges versus cumulative counters. Read counter reset, socket reuse, IPv4/IPv6, and partial-permission tests alongside the code.
 

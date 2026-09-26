@@ -27,6 +27,10 @@ weaknet_add_cpp_test(socket_diag_parser socket_diag_parser_test.cpp)
 target_link_libraries(socket_diag_parser PRIVATE weaknet_data_plane)
 set_tests_properties(socket_diag_parser PROPERTIES LABELS "phase5.2")
 
+weaknet_add_cpp_test(tcp_metrics tcp_metrics_test.cpp)
+target_link_libraries(tcp_metrics PRIVATE weaknet_data_plane)
+set_tests_properties(tcp_metrics PROPERTIES LABELS "phase5.3")
+
 weaknet_add_cpp_test(event_bus_concurrency event_bus_test.cpp)
 target_link_libraries(event_bus_concurrency PRIVATE weaknet_data_plane Threads::Threads)
 set_tests_properties(event_bus_concurrency PROPERTIES LABELS "phase3;concurrency")
