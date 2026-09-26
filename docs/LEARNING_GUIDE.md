@@ -153,6 +153,8 @@ request -> sequence/sender validation -> multipart parser
 
 Then trace an incremental route notification and its reconciliation. Study route table, priority, multipath, IPv4/IPv6, on-link default, link rename/delete, and namespace tests. Use lab scenarios to see real kernel messages only after fixture tests make the parser understandable.
 
+Treat transport startup and topology reconciliation as separate lifecycle stages. A socket create/configure/bind failure leaves the collector stopped, while a dump failure after the socket opens keeps the worker running with degraded telemetry and an empty non-authoritative or last-known-good snapshot. During a dump, sequence-0 link/address/route notifications are recorded but deliberately not merged; the candidate is rejected and resynced if any relevant notification races it. ENOBUFS and malformed/ambiguous notification application follow the same bounded recovery path. Follow the bounded 250 ms-to-five-second recovery backoff through a successful transactional commit; collector telemetry recovers immediately, although the current direct `RuntimeHealth` startup entry is not automatically refreshed.
+
 ### 7. Read `SocketTracker` and TCP_INFO next
 
 Read socket identity/generation before reading metric calculations. Trace:

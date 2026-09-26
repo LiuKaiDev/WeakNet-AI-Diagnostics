@@ -26,6 +26,7 @@ struct ApplicationTestHooks {
     bool seed_test_interface = false;
     std::function<int(std::stop_token, const std::string&, const std::string&, int)>
         ping_operation;
+    v2::NetlinkCollectorTestHooks netlink_collector;
 };
 
 class DaemonApplication {

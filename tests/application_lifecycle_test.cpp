@@ -4,6 +4,7 @@
 #include <filesystem>
 #include <iostream>
 #include <string>
+#include <sys/eventfd.h>
 #include <unistd.h>
 
 using namespace std::chrono_literals;
@@ -31,6 +32,16 @@ weaknet_dbus::RuntimeConfig makeConfig(const std::filesystem::path& root,
     config.log_dir = root / suffix / "log";
     config.runtime_dir = root / suffix / "run";
     return config;
+}
+
+bool hasHealth(const weaknet_dbus::RuntimeHealth& health, const std::string& component,
+               weaknet_dbus::RuntimeHealthState state, const std::string& reason) {
+    for (const auto& entry : health.snapshot()) {
+        if (entry.component == component) {
+            return entry.state == state && entry.reason == reason;
+        }
+    }
+    return false;
 }
 
 }  // namespace
@@ -64,6 +75,42 @@ int main() {
         ok &= expect(!application.eventBus().running(), "Phase 3 EventBus survived application stop");
         const auto elapsed = std::chrono::steady_clock::now() - started;
         ok &= expect(elapsed < 5s, "degraded application stop exceeded five seconds");
+        application.stop();
+    }
+
+    {
+        weaknet_dbus::ApplicationTestHooks hooks;
+        hooks.netlink_collector.open_socket = [] {
+            return ::eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
+        };
+        hooks.netlink_collector.reconcile =
+            [](std::stop_token) -> std::optional<weaknet_dbus::v2::TopologySnapshot> {
+                return std::nullopt;
+            };
+        hooks.netlink_collector.recovery_retry_initial = 10s;
+        hooks.netlink_collector.recovery_retry_max = 10s;
+        weaknet_dbus::DaemonApplication application(
+            makeConfig(root, "netlink-reconcile-degraded"), hooks);
+        ok &= expect(application.start(),
+                     "initial netlink reconciliation failure killed application startup");
+        ok &= expect(hasHealth(application.health(), "netlink_topology",
+                               weaknet_dbus::RuntimeHealthState::Degraded,
+                               "initial_reconciliation_failed"),
+                     "initial reconciliation failure was not reported as degraded health");
+        application.stop();
+    }
+
+    {
+        weaknet_dbus::ApplicationTestHooks hooks;
+        hooks.netlink_collector.open_socket = [] { return -1; };
+        weaknet_dbus::DaemonApplication application(
+            makeConfig(root, "netlink-transport-degraded"), hooks);
+        ok &= expect(application.start(),
+                     "optional netlink transport failure killed application startup");
+        ok &= expect(hasHealth(application.health(), "netlink_topology",
+                               weaknet_dbus::RuntimeHealthState::Degraded,
+                               "transport_or_worker_start_failed"),
+                     "netlink transport failure used an inaccurate health reason");
         application.stop();
     }
 

@@ -7,7 +7,10 @@
 #include <linux/rtnetlink.h>
 #include <linux/if_link.h>
 #include <net/if.h>
+#include <sys/eventfd.h>
 
+#include <atomic>
+#include <chrono>
 #include <cstring>
 #include <cerrno>
 #include <iostream>
@@ -96,6 +99,10 @@ RouteFact route(NetnsId ns, std::uint8_t family, std::uint32_t ifindex, std::uin
     item.type = RTN_UNICAST; item.scope = RT_SCOPE_UNIVERSE; item.output_ifindex = ifindex;
     if (gateway) item.gateway = std::array<std::uint8_t, 16>{1, 2, 3, 4};
     return item;
+}
+
+int fakePollableSocket() {
+    return ::eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
 }
 }
 
@@ -289,17 +296,268 @@ int main() {
                  "topology event sequence/scope assertion failed");
     ok &= expect(!collector.reconcileForTests({}, seq) && collector.snapshot().links.size() == 1,
                  "immediate no-data/EAGAIN equivalent replaced last-good state");
-    ok &= expect(!collector.reconcileForTests({link_bytes}, seq) && collector.snapshot().links.size() == 1,
+    ok &= expect(!collector.reconcileForTests({link_bytes}, seq) &&
+                     collector.snapshot().authoritative && collector.snapshot().links.size() == 1,
                  "incomplete dump replaced last-good state");
-    auto malformed_after_candidate = link_bytes;
+    std::vector<std::byte> partial_attrs;
+    stringAttribute(partial_attrs, IFLA_IFNAME, "partial-only.0");
+    attribute(partial_attrs, IFLA_CARRIER, carrier);
+    const auto partial_candidate = message(RTM_NEWLINK, link, seq, partial_attrs);
+    auto malformed_after_candidate = partial_candidate;
     reinterpret_cast<nlmsghdr*>(malformed_after_candidate.data())->nlmsg_len = 2;
-    ok &= expect(!collector.reconcileForTests({link_bytes, malformed_after_candidate, done(seq)}, seq) &&
-                 collector.snapshot().links.size() == 1,
+    ok &= expect(!collector.reconcileForTests(
+                     {partial_candidate, malformed_after_candidate, done(seq)}, seq) &&
+                     collector.snapshot().authoritative && collector.snapshot().links.size() == 1 &&
+                     collector.snapshot().links.at(3).interface.observed_name == "wan-test.0",
                  "failed reconciliation published a partial candidate");
 
     auto notification = message(RTM_NEWLINK, link, 0, link_attrs);
-    ok &= expect(collector.reconcileForTests({notification, link_bytes, route_bytes, done(seq)}, seq),
-                 "dump/notification race fixture did not converge");
+    const auto published_before_race = collector.telemetry().state_changes_published;
+    ok &= expect(!collector.reconcileForTests({notification, link_bytes, route_bytes, done(seq)}, seq) &&
+                     collector.snapshot().authoritative && collector.snapshot().links.size() == 1 &&
+                     collector.telemetry().notifications_observed_during_reconciliation == 1 &&
+                     collector.telemetry().reconciliation_races == 1 &&
+                     collector.telemetry().state_changes_published == published_before_race,
+                 "dump/notification race committed a stale candidate or published events");
+    ok &= expect(collector.reconcileForTests({link_bytes, route_bytes, done(seq)}, seq) &&
+                     !collector.telemetry().degraded,
+                 "clean reconciliation did not recover after a rejected raced dump");
+
+    {
+        TopologyState routes(ns);
+        auto first = route(ns, AF_INET, 3, 10);
+        auto second = route(ns, AF_INET, 3, 20);
+        ParsedMessage add_first; add_first.kind = ParsedMessageKind::Route; add_first.route = first;
+        ParsedMessage add_second; add_second.kind = ParsedMessageKind::Route; add_second.route = second;
+        ok &= expect(routes.applyChecked(add_first) == TopologyApplyResult::Changed &&
+                         routes.applyChecked(add_second) == TopologyApplyResult::Changed,
+                     "route identity fixture did not add both similar routes");
+        auto exact_delete = first; exact_delete.present = false;
+        exact_delete.attribute_mask = RoutePriorityAttribute | RouteOutputInterfaceAttribute |
+                                      RouteGatewayAttribute;
+        ParsedMessage delete_first; delete_first.kind = ParsedMessageKind::Route;
+        delete_first.route = exact_delete;
+        ok &= expect(routes.applyChecked(delete_first) == TopologyApplyResult::Changed &&
+                         routes.snapshot().routes.size() == 1 &&
+                         routes.snapshot().routes.front().priority == 20,
+                     "exact route delete removed the wrong similar route");
+
+        auto ambiguous_left = route(ns, AF_INET6, 3, 30);
+        auto ambiguous_right = route(ns, AF_INET6, 4, 30);
+        ParsedMessage add_left; add_left.kind = ParsedMessageKind::Route; add_left.route = ambiguous_left;
+        ParsedMessage add_right; add_right.kind = ParsedMessageKind::Route; add_right.route = ambiguous_right;
+        routes.applyChecked(add_left); routes.applyChecked(add_right);
+        auto ambiguous_delete = ambiguous_left; ambiguous_delete.present = false;
+        ambiguous_delete.output_ifindex.reset();
+        ambiguous_delete.gateway.reset();
+        ambiguous_delete.attribute_mask = 0;
+        ParsedMessage delete_ambiguous; delete_ambiguous.kind = ParsedMessageKind::Route;
+        delete_ambiguous.route = ambiguous_delete;
+        ok &= expect(routes.applyChecked(delete_ambiguous) == TopologyApplyResult::AmbiguousDelete &&
+                         routes.snapshot().routes.size() == 3,
+                     "ambiguous route delete guessed instead of requesting reconciliation");
+
+        auto multipath_left = route(ns, AF_INET, 3, 40);
+        multipath_left.output_ifindex.reset();
+        multipath_left.multipath = {{3, {}, 0, 0}, {4, {}, 1, 0}};
+        auto multipath_reordered = multipath_left;
+        std::reverse(multipath_reordered.multipath.begin(), multipath_reordered.multipath.end());
+        ParsedMessage add_multipath; add_multipath.kind = ParsedMessageKind::Route;
+        add_multipath.route = multipath_left;
+        ParsedMessage add_reordered; add_reordered.kind = ParsedMessageKind::Route;
+        add_reordered.route = multipath_reordered;
+        ok &= expect(routes.applyChecked(add_multipath) == TopologyApplyResult::Changed &&
+                         routes.applyChecked(add_reordered) == TopologyApplyResult::NoChange,
+                     "multipath nexthop ordering changed route identity");
+        auto unrelated_multipath = multipath_left;
+        unrelated_multipath.priority = 41;
+        unrelated_multipath.multipath = {{3, {}, 0, 0}, {5, {}, 1, 0}};
+        ParsedMessage add_unrelated; add_unrelated.kind = ParsedMessageKind::Route;
+        add_unrelated.route = unrelated_multipath;
+        routes.applyChecked(add_unrelated);
+        auto delete_multipath = multipath_left;
+        delete_multipath.present = false;
+        delete_multipath.attribute_mask = RoutePriorityAttribute | RouteMultipathAttribute;
+        ParsedMessage delete_multipath_message;
+        delete_multipath_message.kind = ParsedMessageKind::Route;
+        delete_multipath_message.route = delete_multipath;
+        const auto delete_result = routes.applyChecked(delete_multipath_message);
+        const auto after_multipath_delete = routes.snapshot();
+        const bool left_remaining = std::any_of(after_multipath_delete.routes.begin(), after_multipath_delete.routes.end(),
+            [&](const RouteFact& item) { return item.identity() == multipath_left.identity(); });
+        const bool unrelated_remaining = std::any_of(after_multipath_delete.routes.begin(), after_multipath_delete.routes.end(),
+            [&](const RouteFact& item) { return item.identity() == unrelated_multipath.identity(); });
+        ok &= expect(delete_result == TopologyApplyResult::Changed && !left_remaining && unrelated_remaining,
+                     "multipath delete removed an unrelated route");
+    }
+
+    {
+        const auto before = collector.snapshot();
+        auto malformed_notification = link_bytes;
+        reinterpret_cast<nlmsghdr*>(malformed_notification.data())->nlmsg_len = 2;
+        ok &= expect(!collector.processNotificationForTests(malformed_notification) &&
+                         collector.snapshot().links.size() == before.links.size() &&
+                         collector.telemetry().notification_apply_failures != 0 &&
+                         collector.telemetry().forced_resync_requests != 0,
+                     "malformed notification partially corrupted authoritative topology");
+    }
+
+    {
+        EventBus delete_bus(16);
+        ManualClock delete_clock;
+        NetlinkCollector delete_collector(delete_bus, delete_clock, ns);
+        std::vector<std::byte> first_route_attrs;
+        std::vector<std::byte> second_route_attrs;
+        std::uint32_t first_ifindex = 3;
+        std::uint32_t second_ifindex = 4;
+        attribute(first_route_attrs, RTA_OIF, first_ifindex);
+        attribute(second_route_attrs, RTA_OIF, second_ifindex);
+        auto first_route_bytes = message(RTM_NEWROUTE, route_header, seq, first_route_attrs);
+        auto second_route_bytes = message(RTM_NEWROUTE, route_header, seq, second_route_attrs);
+        ok &= expect(delete_collector.reconcileForTests(
+                         {first_route_bytes, second_route_bytes, done(seq)}, seq),
+                     "ambiguous-delete fixture reconciliation failed");
+        auto ambiguous_delete_bytes = message(RTM_DELROUTE, route_header, 0, {});
+        ok &= expect(!delete_collector.processNotificationForTests(ambiguous_delete_bytes) &&
+                         delete_collector.snapshot().routes.size() == 2 &&
+                         delete_collector.telemetry().ambiguous_route_deletes == 1 &&
+                         delete_collector.telemetry().forced_resync_requests != 0,
+                     "ambiguous route notification guessed or failed to request resync");
+
+        NetlinkCollector batch_collector(delete_bus, delete_clock, ns);
+        ok &= expect(batch_collector.reconcileForTests(
+                         {first_route_bytes, second_route_bytes, done(seq)}, seq),
+                     "notification batch fixture reconciliation failed");
+        const auto mixed_notifications = join({
+            message(RTM_NEWLINK, link, 0, link_attrs), ambiguous_delete_bytes});
+        ok &= expect(!batch_collector.processNotificationForTests(mixed_notifications) &&
+                         batch_collector.snapshot().links.empty() &&
+                         batch_collector.snapshot().routes.size() == 2,
+                     "failed notification batch partially mutated authoritative state");
+    }
+
+    {
+        EventBus overflow_bus(16);
+        SystemClock overflow_clock;
+        std::atomic<bool> inject_overflow{true};
+        std::atomic<int> reconciliations{0};
+        std::mutex overflow_mutex;
+        std::condition_variable overflow_cv;
+        NetlinkCollectorTestHooks hooks;
+        hooks.open_socket = fakePollableSocket;
+        hooks.recovery_retry_initial = std::chrono::milliseconds(25);
+        hooks.recovery_retry_max = std::chrono::milliseconds(50);
+        hooks.inject_overflow = [&] { return inject_overflow.exchange(false); };
+        hooks.reconcile = [&](std::stop_token) -> std::optional<TopologySnapshot> {
+            const auto attempt = ++reconciliations;
+            TopologySnapshot recovered;
+            recovered.netns = ns;
+            recovered.links.emplace(3, link_fact);
+            auto recovered_route = route(ns, AF_INET, 3, attempt == 1 ? 50 : 60);
+            recovered.routes.push_back(recovered_route);
+            return recovered;
+        };
+        hooks.reconciliation_complete = [&](bool) { overflow_cv.notify_all(); };
+        NetlinkCollector overflow_collector(
+            overflow_bus, overflow_clock, ns, std::chrono::seconds(30), std::move(hooks));
+        ok &= expect(overflow_collector.start(), "ENOBUFS seam collector failed to start");
+        {
+            std::unique_lock lock(overflow_mutex);
+            overflow_cv.wait_for(lock, std::chrono::seconds(1), [&] {
+                return reconciliations.load() >= 2;
+            });
+        }
+        const auto overflow_telemetry = overflow_collector.telemetry();
+        ok &= expect(overflow_telemetry.overflow_events != 0 &&
+                         overflow_telemetry.forced_resync_requests != 0 &&
+                         overflow_collector.snapshot().authoritative &&
+                         !overflow_collector.snapshot().links.empty(),
+                     "ENOBUFS did not preserve topology and request prompt reconciliation");
+        overflow_collector.stop();
+    }
+
+    {
+        EventBus lifecycle_bus(64);
+        SystemClock lifecycle_clock;
+        std::mutex reconciliation_mutex;
+        std::condition_variable reconciliation_cv;
+        std::atomic<int> reconciliation_attempts{0};
+        std::atomic<int> completed_reconciliations{0};
+        NetlinkCollectorTestHooks hooks;
+        hooks.open_socket = fakePollableSocket;
+        hooks.recovery_retry_initial = std::chrono::milliseconds(25);
+        hooks.recovery_retry_max = std::chrono::milliseconds(50);
+        hooks.reconcile = [&](std::stop_token) -> std::optional<TopologySnapshot> {
+            const auto attempt = reconciliation_attempts.fetch_add(1) + 1;
+            if (attempt == 1) return std::nullopt;
+            TopologySnapshot recovered;
+            recovered.netns = ns;
+            recovered.links.emplace(3, link_fact);
+            recovered.routes.push_back(high);
+            return recovered;
+        };
+        hooks.reconciliation_complete = [&](bool) {
+            completed_reconciliations.fetch_add(1);
+            reconciliation_cv.notify_all();
+        };
+        NetlinkCollector lifecycle_collector(
+            lifecycle_bus, lifecycle_clock, ns, std::chrono::seconds(30), std::move(hooks));
+        ok &= expect(lifecycle_collector.start(),
+                     "initial reconciliation failure was treated as transport startup failure");
+        ok &= expect(lifecycle_collector.running(),
+                     "collector did not remain running after initial reconciliation failure");
+        ok &= expect(lifecycle_collector.telemetry().degraded,
+                     "initial reconciliation failure did not degrade telemetry");
+        ok &= expect(!lifecycle_collector.snapshot().authoritative,
+                     "initial reconciliation failure produced an authoritative empty snapshot");
+        {
+            std::unique_lock lock(reconciliation_mutex);
+            reconciliation_cv.wait_for(lock, std::chrono::seconds(1), [&] {
+                return completed_reconciliations.load() >= 2;
+            });
+        }
+        ok &= expect(reconciliation_attempts.load() >= 2 &&
+                         completed_reconciliations.load() >= 2,
+                     "degraded collector did not retry reconciliation early");
+        ok &= expect(lifecycle_collector.snapshot().authoritative &&
+                         lifecycle_collector.snapshot().links.size() == 1,
+                     "successful retry did not commit an authoritative snapshot");
+        ok &= expect(!lifecycle_collector.telemetry().degraded,
+                     "successful retry did not clear degraded telemetry");
+        lifecycle_collector.stop();
+    }
+
+    {
+        EventBus transport_bus(8);
+        SystemClock transport_clock;
+        NetlinkCollectorTestHooks hooks;
+        hooks.open_socket = [] { return -1; };
+        NetlinkCollector transport_failure(
+            transport_bus, transport_clock, ns, std::chrono::seconds(30), std::move(hooks));
+        ok &= expect(!transport_failure.start() && !transport_failure.running(),
+                     "transport initialization failure was treated as a running collector");
+    }
+
+    {
+        EventBus retry_bus(8);
+        SystemClock retry_clock;
+        NetlinkCollectorTestHooks hooks;
+        hooks.open_socket = fakePollableSocket;
+        hooks.reconcile = [](std::stop_token) -> std::optional<TopologySnapshot> {
+            return std::nullopt;
+        };
+        hooks.recovery_retry_initial = std::chrono::seconds(10);
+        hooks.recovery_retry_max = std::chrono::seconds(10);
+        NetlinkCollector retry_collector(
+            retry_bus, retry_clock, ns, std::chrono::seconds(30), std::move(hooks));
+        ok &= expect(retry_collector.start() && retry_collector.telemetry().degraded,
+                     "degraded retry collector did not start");
+        const auto stop_started = std::chrono::steady_clock::now();
+        retry_collector.stop();
+        const auto stop_elapsed = std::chrono::steady_clock::now() - stop_started;
+        ok &= expect(stop_elapsed < std::chrono::seconds(1) && !retry_collector.running(),
+                     "stop was not bounded while waiting for degraded reconciliation retry");
+    }
 
     weaknet_dbus::WeakNetMgr compatibility;
     compatibility.setTopologyCollector(&collector);

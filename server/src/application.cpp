@@ -211,9 +211,17 @@ bool DaemonApplication::start() {
     v2_adapter_ = std::make_unique<v2::V1ObservationAdapter>(
         event_bus_, metric_store_, clock_, *netns);
     context_.v2_adapter = v2_adapter_.get();
-    topology_collector_ = std::make_unique<v2::NetlinkCollector>(event_bus_, clock_, *netns);
+    topology_collector_ = std::make_unique<v2::NetlinkCollector>(
+        event_bus_, clock_, *netns, std::chrono::seconds(30),
+        test_hooks_.netlink_collector);
     if (!topology_collector_->start()) {
-        health_.set("netlink_topology", RuntimeHealthState::Degraded, "initial_reconciliation_failed");
+        health_.set("netlink_topology", RuntimeHealthState::Degraded,
+                    "transport_or_worker_start_failed");
+        v2_adapter_->mirrorCollectorHealth("netlink_topology", v2::CollectorState::Degraded,
+                                           "transport_or_worker_start_failed");
+    } else if (topology_collector_->telemetry().degraded) {
+        health_.set("netlink_topology", RuntimeHealthState::Degraded,
+                    "initial_reconciliation_failed");
         v2_adapter_->mirrorCollectorHealth("netlink_topology", v2::CollectorState::Degraded,
                                            "initial_reconciliation_failed");
     } else {

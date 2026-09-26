@@ -22,8 +22,11 @@ bool LinkFact::usable() const noexcept {
 }
 
 std::string RouteFact::identity() const {
+    auto nexthops = multipath;
+    std::sort(nexthops.begin(), nexthops.end());
     std::ostringstream output;
-    output << static_cast<unsigned>(family) << ':' << static_cast<unsigned>(destination_prefix)
+    output << netns.device << ':' << netns.inode << ':'
+           << static_cast<unsigned>(family) << ':' << static_cast<unsigned>(destination_prefix)
            << ':' << table << ':' << priority << ':' << static_cast<unsigned>(protocol)
            << ':' << static_cast<unsigned>(scope) << ':' << static_cast<unsigned>(type) << ':';
     for (const auto byte : destination) output << std::hex << std::setw(2) << std::setfill('0') << static_cast<unsigned>(byte);
@@ -38,7 +41,7 @@ std::string RouteFact::identity() const {
         output << '-';
     }
     output << ':';
-    for (const auto& nexthop : multipath) {
+    for (const auto& nexthop : nexthops) {
         output << nexthop.ifindex << ',' << static_cast<unsigned>(nexthop.hops) << ','
                << static_cast<unsigned>(nexthop.flags) << ';';
         for (const auto byte : nexthop.gateway) output << std::hex << std::setw(2) << std::setfill('0') << static_cast<unsigned>(byte);

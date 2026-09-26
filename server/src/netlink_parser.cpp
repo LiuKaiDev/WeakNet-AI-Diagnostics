@@ -127,13 +127,13 @@ RouteFact parseRoute(const rtmsg* message, const std::vector<const rtattr*>& att
     for (const auto* attribute : attributes) {
         const auto type = attribute->rta_type & NLA_TYPE_MASK;
         switch (type) {
-            case RTA_DST: result.destination = attributeAddress(attribute, result.family); break;
-            case RTA_GATEWAY: result.gateway = attributeAddress(attribute, result.family); break;
-            case RTA_PREFSRC: result.preferred_source = attributeAddress(attribute, result.family); break;
-            case RTA_OIF: { std::uint32_t value{}; if (copyAttribute(attribute, value)) result.output_ifindex = value; break; }
-            case RTA_PRIORITY: copyAttribute(attribute, result.priority); break;
-            case RTA_TABLE: copyAttribute(attribute, result.table); break;
-            case RTA_MULTIPATH: multipath = attribute; break;
+            case RTA_DST: result.destination = attributeAddress(attribute, result.family); result.attribute_mask |= RouteDestinationAttribute; break;
+            case RTA_GATEWAY: result.gateway = attributeAddress(attribute, result.family); result.attribute_mask |= RouteGatewayAttribute; break;
+            case RTA_PREFSRC: result.preferred_source = attributeAddress(attribute, result.family); result.attribute_mask |= RoutePreferredSourceAttribute; break;
+            case RTA_OIF: { std::uint32_t value{}; if (copyAttribute(attribute, value)) result.output_ifindex = value; result.attribute_mask |= RouteOutputInterfaceAttribute; break; }
+            case RTA_PRIORITY: copyAttribute(attribute, result.priority); result.attribute_mask |= RoutePriorityAttribute; break;
+            case RTA_TABLE: copyAttribute(attribute, result.table); result.attribute_mask |= RouteTableAttribute; break;
+            case RTA_MULTIPATH: multipath = attribute; result.attribute_mask |= RouteMultipathAttribute; break;
             default: break;
         }
     }
@@ -168,6 +168,7 @@ RouteFact parseRoute(const rtmsg* message, const std::vector<const rtattr*>& att
             length -= RTNH_ALIGN(nexthop->rtnh_len);
             nexthop = RTNH_NEXT(nexthop);
         }
+        std::sort(result.multipath.begin(), result.multipath.end());
     }
     return result;
 }

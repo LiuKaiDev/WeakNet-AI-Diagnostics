@@ -35,59 +35,98 @@ TopologyState::TopologyState(NetnsId netns) {
 }
 
 bool TopologyState::apply(const ParsedMessage& message) {
+    return applyChecked(message) == TopologyApplyResult::Changed;
+}
+
+TopologyApplyResult TopologyState::applyChecked(const ParsedMessage& message) {
     std::lock_guard lock(mutex_);
     if (message.kind == ParsedMessageKind::Link && message.link) {
         const auto& fact = *message.link;
+        if (fact.netns != snapshot_.netns) return TopologyApplyResult::Invalid;
         if (!fact.present) {
             const auto erased = snapshot_.links.erase(fact.interface.ifindex);
+            const auto old_addresses = snapshot_.addresses.size();
             snapshot_.addresses.erase(std::remove_if(snapshot_.addresses.begin(), snapshot_.addresses.end(),
                 [&](const AddressFact& item) { return item.interface.ifindex == fact.interface.ifindex; }), snapshot_.addresses.end());
+            const auto old_routes = snapshot_.routes.size();
             snapshot_.routes.erase(std::remove_if(snapshot_.routes.begin(), snapshot_.routes.end(),
                 [&](const RouteFact& item) {
                     return (item.output_ifindex && *item.output_ifindex == fact.interface.ifindex) ||
                         std::any_of(item.multipath.begin(), item.multipath.end(), [&](const RouteNexthop& hop) { return hop.ifindex == fact.interface.ifindex; });
                 }), snapshot_.routes.end());
-            return erased != 0;
+            return erased != 0 || old_addresses != snapshot_.addresses.size() ||
+                       old_routes != snapshot_.routes.size()
+                ? TopologyApplyResult::Changed : TopologyApplyResult::NoChange;
         }
         const auto iterator = snapshot_.links.find(fact.interface.ifindex);
         const bool changed = iterator == snapshot_.links.end() || iterator->second.interface.observed_name != fact.interface.observed_name ||
                              iterator->second.flags != fact.flags || iterator->second.oper_state != fact.oper_state || iterator->second.carrier != fact.carrier || iterator->second.carrier_known != fact.carrier_known;
         snapshot_.links[fact.interface.ifindex] = fact;
-        return changed;
+        return changed ? TopologyApplyResult::Changed : TopologyApplyResult::NoChange;
     }
     if (message.kind == ParsedMessageKind::Address && message.address) {
         const auto& fact = *message.address;
+        if (fact.netns != snapshot_.netns) return TopologyApplyResult::Invalid;
         const auto match = [&](const AddressFact& item) {
             return item.netns == fact.netns && item.interface == fact.interface && item.family == fact.family &&
                    item.prefix_length == fact.prefix_length && item.address == fact.address;
         };
         const auto iterator = std::find_if(snapshot_.addresses.begin(), snapshot_.addresses.end(), match);
         if (!fact.present) {
-            if (iterator == snapshot_.addresses.end()) return false;
+            if (iterator == snapshot_.addresses.end()) return TopologyApplyResult::NoChange;
             snapshot_.addresses.erase(iterator);
-            return true;
+            return TopologyApplyResult::Changed;
         }
-        if (iterator == snapshot_.addresses.end()) { snapshot_.addresses.push_back(fact); return true; }
-        if (*iterator == fact) return false;
+        if (iterator == snapshot_.addresses.end()) { snapshot_.addresses.push_back(fact); return TopologyApplyResult::Changed; }
+        if (*iterator == fact) return TopologyApplyResult::NoChange;
         *iterator = fact;
-        return true;
+        return TopologyApplyResult::Changed;
     }
     if (message.kind == ParsedMessageKind::Route && message.route) {
-        const auto& fact = *message.route;
+        auto fact = *message.route;
+        if (fact.netns != snapshot_.netns) return TopologyApplyResult::Invalid;
+        std::sort(fact.multipath.begin(), fact.multipath.end());
+        if (!fact.present) {
+            if (fact.destination_prefix != 0 &&
+                !(fact.attribute_mask & RouteDestinationAttribute)) {
+                return TopologyApplyResult::AmbiguousDelete;
+            }
+            const auto matches = [&](const RouteFact& item) {
+                if (item.netns != fact.netns || item.family != fact.family ||
+                    item.destination_prefix != fact.destination_prefix ||
+                    item.table != fact.table ||
+                    item.protocol != fact.protocol || item.scope != fact.scope ||
+                    item.type != fact.type) return false;
+                if ((fact.attribute_mask & RouteDestinationAttribute) &&
+                    item.destination != fact.destination) return false;
+                if ((fact.attribute_mask & RoutePriorityAttribute) && item.priority != fact.priority) return false;
+                if ((fact.attribute_mask & RouteOutputInterfaceAttribute) && item.output_ifindex != fact.output_ifindex) return false;
+                if ((fact.attribute_mask & RouteGatewayAttribute) && item.gateway != fact.gateway) return false;
+                if ((fact.attribute_mask & RoutePreferredSourceAttribute) && item.preferred_source != fact.preferred_source) return false;
+                if ((fact.attribute_mask & RouteMultipathAttribute) && item.multipath != fact.multipath) return false;
+                return true;
+            };
+            std::vector<std::size_t> matches_found;
+            for (std::size_t index = 0; index < snapshot_.routes.size(); ++index) {
+                if (matches(snapshot_.routes[index])) matches_found.push_back(index);
+            }
+            if (matches_found.empty()) return TopologyApplyResult::NoChange;
+            if (matches_found.size() != 1) return TopologyApplyResult::AmbiguousDelete;
+            snapshot_.routes.erase(snapshot_.routes.begin() + static_cast<std::ptrdiff_t>(matches_found.front()));
+            return TopologyApplyResult::Changed;
+        }
         const auto key = fact.identity();
         const auto iterator = std::find_if(snapshot_.routes.begin(), snapshot_.routes.end(),
             [&](const RouteFact& item) { return item.identity() == key; });
-        if (!fact.present) {
-            if (iterator == snapshot_.routes.end()) return false;
-            snapshot_.routes.erase(iterator);
-            return true;
+        if (iterator == snapshot_.routes.end()) {
+            snapshot_.routes.push_back(std::move(fact));
+            return TopologyApplyResult::Changed;
         }
-        if (iterator == snapshot_.routes.end()) { snapshot_.routes.push_back(fact); return true; }
-        if (*iterator == fact) return false;
-        *iterator = fact;
-        return true;
+        // identity() canonicalizes multipath nexthop ordering, so an update
+        // that only reorders semantically equivalent nexthops is a no-op.
+        return TopologyApplyResult::NoChange;
     }
-    return false;
+    return TopologyApplyResult::Invalid;
 }
 
 void TopologyState::replace(const TopologySnapshot& snapshot) {
@@ -101,19 +140,36 @@ TopologySnapshot TopologyState::snapshot() const {
 }
 
 NetlinkCollector::NetlinkCollector(EventBus& bus, const Clock& clock, NetnsId netns,
-                                   std::chrono::milliseconds reconciliation_interval)
-    : bus_(bus), clock_(clock), netns_(netns), reconciliation_interval_(reconciliation_interval), state_(netns) {
+                                   std::chrono::milliseconds reconciliation_interval,
+                                   NetlinkCollectorTestHooks test_hooks)
+    : bus_(bus), clock_(clock), netns_(netns),
+      reconciliation_interval_(reconciliation_interval),
+      test_hooks_(std::move(test_hooks)), state_(netns) {
     if (netns_.inode == 0) throw std::invalid_argument("NetlinkCollector requires namespace identity");
+    if (reconciliation_interval_ <= std::chrono::milliseconds::zero() ||
+        test_hooks_.recovery_retry_initial <= std::chrono::milliseconds::zero() ||
+        test_hooks_.recovery_retry_max < test_hooks_.recovery_retry_initial) {
+        throw std::invalid_argument("NetlinkCollector requires positive bounded retry intervals");
+    }
 }
 
 NetlinkCollector::~NetlinkCollector() { stop(); }
 
 bool NetlinkCollector::openSocket() {
 #if defined(__linux__)
+    if (test_hooks_.open_socket) {
+        const int fd = test_hooks_.open_socket();
+        if (fd < 0) return false;
+        socket_fd_.store(fd);
+        return true;
+    }
     const int fd = ::socket(AF_NETLINK, SOCK_RAW | SOCK_CLOEXEC, NETLINK_ROUTE);
     if (fd < 0) return false;
     int receive_buffer = 1024 * 1024;
-    (void)::setsockopt(fd, SOL_SOCKET, SO_RCVBUF, &receive_buffer, sizeof(receive_buffer));
+    if (::setsockopt(fd, SOL_SOCKET, SO_RCVBUF, &receive_buffer, sizeof(receive_buffer)) != 0) {
+        ::close(fd);
+        return false;
+    }
     sockaddr_nl address{};
     address.nl_family = AF_NETLINK;
     address.nl_groups = RTMGRP_LINK | RTMGRP_IPV4_IFADDR | RTMGRP_IPV6_IFADDR |
@@ -131,14 +187,16 @@ bool NetlinkCollector::openSocket() {
 bool NetlinkCollector::start() {
     if (running_.exchange(true)) return true;
     if (!openSocket()) { running_.store(false); return false; }
-    if (!fullReconcile({})) {
+    (void)fullReconcile({});
+    try {
+        worker_ = std::jthread([this](std::stop_token token) { loop(token); });
+    } catch (...) {
         running_.store(false);
 #if defined(__linux__)
         const int fd = socket_fd_.exchange(-1); if (fd >= 0) ::close(fd);
 #endif
         return false;
     }
-    worker_ = std::jthread([this](std::stop_token token) { loop(token); });
     return true;
 }
 
@@ -162,7 +220,7 @@ NetlinkCollectorTelemetry NetlinkCollector::telemetry() const {
 }
 
 bool NetlinkCollector::dump(std::uint16_t type, std::uint8_t family, TopologySnapshot& candidate,
-                            std::stop_token token) {
+                            std::stop_token token, bool& notification_raced) {
 #if defined(__linux__)
     const int fd = socket_fd_.load();
     if (fd < 0) return false;
@@ -196,19 +254,33 @@ bool NetlinkCollector::dump(std::uint16_t type, std::uint8_t family, TopologySna
         if (length < 0) {
             if (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK) continue;
             if (errno == ENOBUFS) {
-                std::lock_guard lock(mutex_);
-                ++telemetry_.overflow_events;
-                ++telemetry_.resync_requests;
+                markOverflow();
             }
             return false;
         }
-        if ((receive.msg_flags & MSG_TRUNC) != 0) { std::lock_guard lock(mutex_); ++telemetry_.truncations; return false; }
+        if ((receive.msg_flags & MSG_TRUNC) != 0) {
+            std::lock_guard lock(mutex_);
+            ++telemetry_.truncations;
+            ++telemetry_.forced_resync_requests;
+            ++telemetry_.resync_requests;
+            telemetry_.degraded = true;
+            telemetry_.last_error = "netlink_datagram_truncated";
+            return false;
+        }
         const auto parsed = RtnetlinkParser::parse(buffer.data(), static_cast<std::size_t>(length), sender.nl_pid,
                                                    request_sequence, netns_, true);
         if (parsed.malformed || parsed.truncated || !parsed.error.empty()) {
             std::lock_guard lock(mutex_); ++telemetry_.parse_errors; telemetry_.last_error = parsed.error; return false;
         }
         for (const auto& item : parsed.messages) {
+            if (item.sequence == 0 &&
+                (item.kind == ParsedMessageKind::Link || item.kind == ParsedMessageKind::Address ||
+                 item.kind == ParsedMessageKind::Route)) {
+                notification_raced = true;
+                std::lock_guard lock(mutex_);
+                ++telemetry_.notifications_observed_during_reconciliation;
+                continue;
+            }
             if (item.kind == ParsedMessageKind::Error && item.error_code != 0) return false;
             if (item.kind == ParsedMessageKind::Done) {
                 if (item.dump_interrupted) {
@@ -220,7 +292,13 @@ bool NetlinkCollector::dump(std::uint16_t type, std::uint8_t family, TopologySna
                 continue;
             }
             if (item.kind == ParsedMessageKind::Link || item.kind == ParsedMessageKind::Address || item.kind == ParsedMessageKind::Route) {
-                TopologyState temporary(candidate.netns); temporary.replace(candidate); temporary.apply(item); candidate = temporary.snapshot();
+                TopologyState temporary(candidate.netns);
+                temporary.replace(candidate);
+                const auto result = temporary.applyChecked(item);
+                if (result != TopologyApplyResult::Changed && result != TopologyApplyResult::NoChange) {
+                    return false;
+                }
+                candidate = temporary.snapshot();
             }
         }
     }
@@ -231,14 +309,117 @@ bool NetlinkCollector::dump(std::uint16_t type, std::uint8_t family, TopologySna
 }
 
 bool NetlinkCollector::fullReconcile(std::stop_token token) {
-    TopologySnapshot candidate; candidate.netns = netns_;
-    if (!dump(RTM_GETLINK, AF_PACKET, candidate, token) ||
-        !dump(RTM_GETADDR, AF_UNSPEC, candidate, token) ||
-        !dump(RTM_GETROUTE, AF_INET, candidate, token) ||
-        !dump(RTM_GETROUTE, AF_INET6, candidate, token)) {
-        std::lock_guard lock(mutex_); ++telemetry_.failed_dumps; telemetry_.degraded = true; return false;
+    TopologySnapshot candidate;
+    candidate.netns = netns_;
+    bool notification_raced = false;
+    if (test_hooks_.reconcile) {
+        auto result = test_hooks_.reconcile(token);
+        if (!result) {
+            markReconciliationFailed();
+            if (test_hooks_.reconciliation_complete) {
+                test_hooks_.reconciliation_complete(false);
+            }
+            return false;
+        }
+        candidate = std::move(*result);
+        candidate.netns = netns_;
+    } else if (!dump(RTM_GETLINK, AF_PACKET, candidate, token, notification_raced) ||
+               !dump(RTM_GETADDR, AF_UNSPEC, candidate, token, notification_raced) ||
+               !dump(RTM_GETROUTE, AF_INET, candidate, token, notification_raced) ||
+               !dump(RTM_GETROUTE, AF_INET6, candidate, token, notification_raced)) {
+        markReconciliationFailed();
+        if (notification_raced) markNotificationRace();
+        if (test_hooks_.reconciliation_complete) {
+            test_hooks_.reconciliation_complete(false);
+        }
+        return false;
     }
+    if (notification_raced) {
+        markNotificationRace();
+        if (test_hooks_.reconciliation_complete) test_hooks_.reconciliation_complete(false);
+        return false;
+    }
+    commitReconciliation(std::move(candidate));
+    if (test_hooks_.reconciliation_complete) {
+        test_hooks_.reconciliation_complete(true);
+    }
+    return true;
+}
+
+void NetlinkCollector::markReconciliationFailed() {
+    std::lock_guard lock(mutex_);
+    ++telemetry_.failed_dumps;
+    telemetry_.degraded = true;
+    if (telemetry_.last_error.empty()) telemetry_.last_error = "reconciliation_failed";
+}
+
+void NetlinkCollector::markNotificationRace() {
+    std::lock_guard lock(mutex_);
+    ++telemetry_.reconciliation_races;
+    ++telemetry_.forced_resync_requests;
+    ++telemetry_.resync_requests;
+    telemetry_.degraded = true;
+    telemetry_.last_error = "notification_raced_reconciliation";
+}
+
+void NetlinkCollector::markOverflow() {
+    std::lock_guard lock(mutex_);
+    ++telemetry_.overflow_events;
+    ++telemetry_.forced_resync_requests;
+    ++telemetry_.resync_requests;
+    telemetry_.degraded = true;
+    telemetry_.last_error = "netlink_receive_overflow";
+}
+
+bool NetlinkCollector::processNotificationBatch(const std::vector<ParsedMessage>& messages) {
+    if (messages.empty()) return true;
+    for (const auto& message : messages) {
+        if (message.kind == ParsedMessageKind::Link || message.kind == ParsedMessageKind::Address ||
+            message.kind == ParsedMessageKind::Route) continue;
+        std::lock_guard lock(mutex_);
+        ++telemetry_.notification_apply_failures;
+        ++telemetry_.forced_resync_requests;
+        ++telemetry_.resync_requests;
+        telemetry_.degraded = true;
+        telemetry_.last_error = "unsupported_netlink_notification";
+        return false;
+    }
+    const auto before = state_.snapshot();
+    TopologyState candidate(before.netns);
+    candidate.replace(before);
+    bool changed = false;
+    for (const auto& message : messages) {
+        const auto result = candidate.applyChecked(message);
+        if (result == TopologyApplyResult::Invalid || result == TopologyApplyResult::AmbiguousDelete) {
+            std::lock_guard lock(mutex_);
+            if (result == TopologyApplyResult::AmbiguousDelete) ++telemetry_.ambiguous_route_deletes;
+            ++telemetry_.notification_apply_failures;
+            ++telemetry_.forced_resync_requests;
+            ++telemetry_.resync_requests;
+            telemetry_.degraded = true;
+            telemetry_.last_error = result == TopologyApplyResult::AmbiguousDelete
+                ? "ambiguous_route_delete" : "notification_apply_failed";
+            return false;
+        }
+        changed = changed || result == TopologyApplyResult::Changed;
+    }
+    if (changed) {
+        const auto after = candidate.snapshot();
+        state_.replace(after);
+        {
+            std::lock_guard lock(mutex_);
+            selected_ = UplinkPolicy{}.select(after);
+        }
+        publishChanges(before, after);
+    }
+    std::lock_guard lock(mutex_);
+    telemetry_.notifications_processed += messages.size();
+    return true;
+}
+
+void NetlinkCollector::commitReconciliation(TopologySnapshot candidate) {
     candidate.authoritative = true;
+    candidate.partial = false;
     const auto before = state_.snapshot();
     state_.replace(candidate);
     {
@@ -247,9 +428,11 @@ bool NetlinkCollector::fullReconcile(std::stop_token token) {
     }
     publishChanges(before, candidate);
     {
-        std::lock_guard lock(mutex_); ++telemetry_.successful_reconciliations; telemetry_.degraded = false;
+        std::lock_guard lock(mutex_);
+        ++telemetry_.successful_reconciliations;
+        telemetry_.degraded = false;
+        telemetry_.last_error.clear();
     }
-    return true;
 }
 
 void NetlinkCollector::publishChanges(const TopologySnapshot& before, const TopologySnapshot& after) {
@@ -302,11 +485,34 @@ void NetlinkCollector::updateTelemetrySnapshot(const TopologySnapshot&) {}
 
 void NetlinkCollector::loop(std::stop_token token) {
 #if defined(__linux__)
-    auto next_reconcile = clock_.monotonicNow() + reconciliation_interval_;
+    auto retry_delay = test_hooks_.recovery_retry_initial;
+    bool degraded = false;
+    {
+        std::lock_guard lock(mutex_);
+        degraded = telemetry_.degraded;
+    }
+    auto next_reconcile = clock_.monotonicNow() +
+        (degraded ? retry_delay : reconciliation_interval_);
     std::array<std::byte, 256 * 1024> buffer{};
     while (!token.stop_requested()) {
         const auto now = clock_.monotonicNow();
-        if (now >= next_reconcile) { { std::lock_guard lock(mutex_); ++telemetry_.resync_requests; } (void)fullReconcile(token); next_reconcile = clock_.monotonicNow() + reconciliation_interval_; continue; }
+        if (now >= next_reconcile) {
+            { std::lock_guard lock(mutex_); ++telemetry_.resync_requests; }
+            if (fullReconcile(token)) {
+                retry_delay = test_hooks_.recovery_retry_initial;
+                next_reconcile = clock_.monotonicNow() + reconciliation_interval_;
+            } else {
+                retry_delay = std::min(retry_delay * 2, test_hooks_.recovery_retry_max);
+                next_reconcile = clock_.monotonicNow() + retry_delay;
+            }
+            continue;
+        }
+        if (test_hooks_.inject_overflow && test_hooks_.inject_overflow()) {
+            markOverflow();
+            next_reconcile = std::min(next_reconcile,
+                                      clock_.monotonicNow() + retry_delay);
+            continue;
+        }
         const int fd = socket_fd_.load(); if (fd < 0) break;
         pollfd descriptor{fd, POLLIN, 0}; const int ready = ::poll(&descriptor, 1, 100);
         if (ready < 0) { if (errno == EINTR) continue; break; }
@@ -316,27 +522,50 @@ void NetlinkCollector::loop(std::stop_token token) {
         const auto length = ::recvmsg(fd, &message, MSG_DONTWAIT);
         if (length < 0) {
             if (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK) continue;
-            if (errno == ENOBUFS) { std::lock_guard lock(mutex_); ++telemetry_.overflow_events; ++telemetry_.resync_requests; continue; }
+            if (errno == ENOBUFS) {
+                markOverflow();
+                next_reconcile = std::min(next_reconcile, clock_.monotonicNow() + retry_delay);
+                continue;
+            }
             break;
         }
-        if ((message.msg_flags & MSG_TRUNC) != 0) { std::lock_guard lock(mutex_); ++telemetry_.truncations; ++telemetry_.resync_requests; continue; }
-        const auto parsed = RtnetlinkParser::parse(buffer.data(), static_cast<std::size_t>(length), sender.nl_pid, std::nullopt, netns_, false);
-        if (parsed.malformed || parsed.truncated) { std::lock_guard lock(mutex_); ++telemetry_.parse_errors; telemetry_.degraded = true; continue; }
-        for (const auto& item : parsed.messages) {
-            if (item.kind != ParsedMessageKind::Link && item.kind != ParsedMessageKind::Address && item.kind != ParsedMessageKind::Route) continue;
-            const auto before = state_.snapshot(); const bool changed = state_.apply(item); const auto after = state_.snapshot();
-            if (changed) {
-                publishMessage(item);
-                const auto old_uplink = UplinkPolicy{}.select(before);
-                const auto new_uplink = UplinkPolicy{}.select(after);
-                if (old_uplink.interface != new_uplink.interface || old_uplink.method_flags != new_uplink.method_flags || old_uplink.validity != new_uplink.validity) {
-                    { std::lock_guard lock(mutex_); selected_ = new_uplink; }
-                    NetworkEventHeader header{kNetworkEventSchemaVersion, EventId{next_event_id_.fetch_add(1)}, {}, EventKind::UplinkObservation, EventSource::NetlinkCollector, clock_.realtimeNow(), clock_.monotonicNow(), netns_, new_uplink.interface, std::nullopt, new_uplink.validity, Status{StatusCode::PolicyEvidence, new_uplink.evidence}};
-                    bus_.publish(NetworkEvent(std::move(header), UplinkObservation{new_uplink.interface ? new_uplink.interface->observed_name : std::string{}, new_uplink.method_flags, new_uplink.interface.has_value(), new_uplink.evidence}));
-                }
+        if ((message.msg_flags & MSG_TRUNC) != 0) {
+            {
+                std::lock_guard lock(mutex_);
+                ++telemetry_.truncations;
+                ++telemetry_.forced_resync_requests;
+                ++telemetry_.resync_requests;
+                ++telemetry_.notification_apply_failures;
+                telemetry_.degraded = true;
+                telemetry_.last_error = "netlink_datagram_truncated";
             }
-            { std::lock_guard lock(mutex_); ++telemetry_.notifications_processed; }
-            (void)before; (void)after;
+            next_reconcile = std::min(next_reconcile, clock_.monotonicNow() + retry_delay);
+            continue;
+        }
+        const auto parsed = RtnetlinkParser::parse(buffer.data(), static_cast<std::size_t>(length), sender.nl_pid, std::nullopt, netns_, false);
+        if (parsed.malformed || parsed.truncated || !parsed.error.empty()) {
+            {
+                std::lock_guard lock(mutex_);
+                ++telemetry_.parse_errors;
+                ++telemetry_.notification_apply_failures;
+                ++telemetry_.forced_resync_requests;
+                ++telemetry_.resync_requests;
+                telemetry_.degraded = true;
+                telemetry_.last_error = parsed.error.empty() ? "netlink_parse_failed" : parsed.error;
+            }
+            next_reconcile = std::min(next_reconcile, clock_.monotonicNow() + retry_delay);
+            continue;
+        }
+        std::vector<ParsedMessage> notifications;
+        for (const auto& item : parsed.messages) {
+            if (item.kind == ParsedMessageKind::Notification || item.kind == ParsedMessageKind::Link ||
+                item.kind == ParsedMessageKind::Address || item.kind == ParsedMessageKind::Route) {
+                notifications.push_back(item);
+            }
+        }
+        if (!notifications.empty() && !processNotificationBatch(notifications)) {
+            next_reconcile = std::min(next_reconcile,
+                                      clock_.monotonicNow() + retry_delay);
         }
     }
 #else
@@ -350,22 +579,53 @@ bool NetlinkCollector::reconcileForTests(const std::vector<std::vector<std::byte
     if (datagrams.empty()) return false;
     TopologyState candidate(netns_);
     bool complete = false;
+    bool notification_raced = false;
     for (const auto& datagram : datagrams) {
         const auto result = RtnetlinkParser::parse(datagram.data(), datagram.size(), 0, expected_sequence, netns_, false);
         if (result.malformed || result.truncated || !result.error.empty()) return false;
         for (const auto& item : result.messages) {
+            if (item.sequence == 0 &&
+                (item.kind == ParsedMessageKind::Link || item.kind == ParsedMessageKind::Address ||
+                 item.kind == ParsedMessageKind::Route)) {
+                notification_raced = true;
+                std::lock_guard lock(mutex_);
+                ++telemetry_.notifications_observed_during_reconciliation;
+                continue;
+            }
             if (item.kind == ParsedMessageKind::Done) {
                 if (item.dump_interrupted) return false;
                 complete = true;
             } else {
-                candidate.apply(item);
+                const auto result = candidate.applyChecked(item);
+                if (result != TopologyApplyResult::Changed && result != TopologyApplyResult::NoChange) {
+                    return false;
+                }
             }
         }
     }
     if (!complete) return false;
-    const auto before = state_.snapshot(); auto after = candidate.snapshot(); after.authoritative = true; state_.replace(after);
-    { std::lock_guard lock(mutex_); selected_ = UplinkPolicy{}.select(after); }
-    publishChanges(before, after); return true;
+    if (notification_raced) {
+        markNotificationRace();
+        return false;
+    }
+    commitReconciliation(candidate.snapshot());
+    return true;
+}
+
+bool NetlinkCollector::processNotificationForTests(const std::vector<std::byte>& datagram) {
+    const auto result = RtnetlinkParser::parse(datagram.data(), datagram.size(), 0,
+                                                std::nullopt, netns_, false);
+    if (result.malformed || result.truncated || !result.error.empty()) {
+        std::lock_guard lock(mutex_);
+        ++telemetry_.parse_errors;
+        ++telemetry_.notification_apply_failures;
+        ++telemetry_.forced_resync_requests;
+        ++telemetry_.resync_requests;
+        telemetry_.degraded = true;
+        telemetry_.last_error = result.error.empty() ? "notification_parse_failed" : result.error;
+        return false;
+    }
+    return processNotificationBatch(result.messages);
 }
 
 }  // namespace weaknet_dbus::v2

@@ -1,12 +1,15 @@
 #pragma once
 
 #include <atomic>
+#include <chrono>
 #include <cstddef>
+#include <functional>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <stop_token>
+#include <string>
 #include <thread>
-#include <chrono>
 #include <vector>
 
 #if defined(__linux__)
@@ -28,6 +31,11 @@ struct NetlinkCollectorTelemetry {
     std::uint64_t truncations{};
     std::uint64_t overflow_events{};
     std::uint64_t resync_requests{};
+    std::uint64_t forced_resync_requests{};
+    std::uint64_t notifications_observed_during_reconciliation{};
+    std::uint64_t reconciliation_races{};
+    std::uint64_t ambiguous_route_deletes{};
+    std::uint64_t notification_apply_failures{};
     std::uint64_t notifications_processed{};
     std::uint64_t state_changes_published{};
     std::size_t link_count{};
@@ -37,10 +45,20 @@ struct NetlinkCollectorTelemetry {
     std::string last_error;
 };
 
+struct NetlinkCollectorTestHooks {
+    std::function<int()> open_socket;
+    std::function<std::optional<TopologySnapshot>(std::stop_token)> reconcile;
+    std::function<void(bool)> reconciliation_complete;
+    std::function<bool()> inject_overflow;
+    std::chrono::milliseconds recovery_retry_initial{std::chrono::milliseconds(250)};
+    std::chrono::milliseconds recovery_retry_max{std::chrono::seconds(5)};
+};
+
 class TopologyState {
 public:
     explicit TopologyState(NetnsId netns = {});
     bool apply(const ParsedMessage& message);
+    TopologyApplyResult applyChecked(const ParsedMessage& message);
     void replace(const TopologySnapshot& snapshot);
     TopologySnapshot snapshot() const;
 
@@ -52,7 +70,8 @@ private:
 class NetlinkCollector {
 public:
     NetlinkCollector(EventBus& bus, const Clock& clock, NetnsId netns,
-                     std::chrono::milliseconds reconciliation_interval = std::chrono::seconds(30));
+                     std::chrono::milliseconds reconciliation_interval = std::chrono::seconds(30),
+                     NetlinkCollectorTestHooks test_hooks = {});
     ~NetlinkCollector();
 
     NetlinkCollector(const NetlinkCollector&) = delete;
@@ -64,6 +83,7 @@ public:
     TopologySnapshot snapshot() const;
     UplinkSelection selectedUplink() const;
     NetlinkCollectorTelemetry telemetry() const;
+    bool processNotificationForTests(const std::vector<std::byte>& datagram);
     bool reconcileForTests(const std::vector<std::vector<std::byte>>& datagrams,
                            std::uint32_t expected_sequence);
 
@@ -71,7 +91,7 @@ private:
     bool openSocket();
     bool fullReconcile(std::stop_token token);
     bool dump(std::uint16_t type, std::uint8_t family, TopologySnapshot& candidate,
-              std::stop_token token);
+              std::stop_token token, bool& notification_raced);
     void loop(std::stop_token token);
     void processDatagram(const void* data, std::size_t size, const sockaddr_nl& sender,
                          std::optional<std::uint32_t> expected_sequence, bool dump_response,
@@ -79,11 +99,17 @@ private:
     void publishChanges(const TopologySnapshot& before, const TopologySnapshot& after);
     void publishMessage(const ParsedMessage& message);
     void updateTelemetrySnapshot(const TopologySnapshot& snapshot);
+    void markReconciliationFailed();
+    void markNotificationRace();
+    void markOverflow();
+    bool processNotificationBatch(const std::vector<ParsedMessage>& messages);
+    void commitReconciliation(TopologySnapshot candidate);
 
     EventBus& bus_;
     const Clock& clock_;
     NetnsId netns_;
     std::chrono::milliseconds reconciliation_interval_;
+    NetlinkCollectorTestHooks test_hooks_;
     mutable std::mutex mutex_;
     TopologyState state_;
     UplinkSelection selected_;
