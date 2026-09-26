@@ -93,6 +93,8 @@ struct TopologySnapshot {
     std::vector<RouteFact> routes;
     bool authoritative{false};
     bool partial{false};
+    bool degraded{false};
+    std::uint64_t generation{};
 };
 
 struct UplinkSelection {

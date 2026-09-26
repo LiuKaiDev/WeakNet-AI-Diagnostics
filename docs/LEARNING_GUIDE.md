@@ -25,12 +25,13 @@ Phase 1 through Phase 3 are now the implemented baseline. The top-level `CMakeLi
   `socket_diag_parser.hpp` path with deterministic identity, lifecycle,
   NETLINK_SOCK_DIAG inventory, variable-size TCP_INFO, and interval-metric
   semantics;
-- exact Phase 5.1 semantics in `docs/PHASE5_SOCKET_TRACKER.md`.
+- exact Phase 5.1–5.4 semantics in `docs/PHASE5_SOCKET_TRACKER.md`, including
+  committed-topology socket route attribution and its uncertainty model.
 
 The later names `weaknetd` and `weaknetctl`, plus IncidentEngine and
 RootCauseEngine, remain target architecture. SocketTracker now provides the
-Phase 5.3 TCP_INFO metric path; Phase 5.4 interface/egress and route
-correlation remain deferred.
+Phase 5.3 TCP_INFO metric path and Phase 5.4 modeled route context; the
+context is not a claim of kernel FIB/RPDB equivalence.
 Read `server/src/application.cpp` after the Phase 1 targets, then read
 `docs/PHASE2_RUNTIME.md`, `docs/PHASE3_DATA_PLANE.md`,
 `docs/PHASE4_NETLINK.md`, and `docs/PHASE5_SOCKET_TRACKER.md`; use later
@@ -189,7 +190,18 @@ Read socket identity/generation before reading metric calculations. Trace:
 
 Pay special attention to fields that are gauges versus cumulative counters. Read counter reset, socket reuse, IPv4/IPv6, and partial-permission tests alongside the code.
 
-### 9. Cross the kernel boundary through eBPF
+### 9. Read modeled socket route attribution
+
+Read `socket_route_attributor.hpp` and its tests after the topology and socket
+models.  The attributor is pure: it performs binary longest-prefix matching
+over the authoritative committed snapshot, applies the Phase 4 table/metric
+policy, and keeps ambiguity and multipath uncertainty explicit.  Treat
+`diag_ifindex` and local/source addresses as evidence rather than conclusions.
+Then follow `SocketTracker::recomputeRouteContexts` and the topology collector
+commit callback to see why rejected candidates cannot publish route context
+and why active sockets are refreshed when topology generation changes.
+
+### 10. Cross the kernel boundary through eBPF
 
 Read in this order:
 

@@ -97,6 +97,7 @@ add_library(weaknet_data_plane STATIC
     server/src/clock.cpp
     server/src/network_event.cpp
     server/src/socket_tracker.cpp
+    server/src/socket_route_attributor.cpp
     server/src/socket_diag_parser.cpp
     server/src/event_bus.cpp
     server/src/metric_store.cpp

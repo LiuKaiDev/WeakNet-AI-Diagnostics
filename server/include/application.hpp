@@ -66,6 +66,7 @@ private:
     std::unique_ptr<v2::V1ObservationAdapter> v2_adapter_;
     std::unique_ptr<v2::NetlinkCollector> topology_collector_;
     std::unique_ptr<v2::SocketTracker> socket_tracker_;
+    std::unique_ptr<v2::SocketRouteAttributor> socket_route_attributor_;
     std::stop_source stop_source_;
     std::atomic<bool> started_{false};
     std::atomic<bool> stopped_{false};

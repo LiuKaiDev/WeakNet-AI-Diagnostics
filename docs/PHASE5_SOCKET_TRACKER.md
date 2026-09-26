@@ -1,4 +1,4 @@
-# Phase 5.1/5.2 socket identity, lifecycle, and inventory
+# Phase 5.1–5.4 socket identity, inventory, metrics, and modeled route context
 
 ## Phase 5.1 scope
 
@@ -147,11 +147,45 @@ generation starts with a baseline-only observation. Raw TCP observations and
 valid interval metrics are published through typed EventBus payloads and valid
 values are stored in MetricStore with socket identity and interval duration.
 
-Interface/egress attribution and route correlation are deferred to Phase 5.4.
+## Phase 5.4 modeled socket route attribution
+
+Phase 5.4 adds `SocketRouteAttributor` and the typed
+`SocketRouteContextObservation` EventBus payload.  It consumes a committed,
+authoritative `TopologySnapshot` and the existing `UplinkPolicy`; it never
+issues an RTM_GETROUTE query per socket.  Matching is binary longest-prefix
+matching for IPv4 (0..32) and IPv6 (0..128), including non-byte-aligned
+prefixes.  Ties use the Phase 4 modeled table order (main, default, then
+other modeled tables), lower priority/metric, and route identity only as a
+stable representative.  Tied routes with different possible interfaces are
+reported as `Ambiguous`, not silently selected.
+
+The context retains route identity/summary, table, prefix, metric, gateway or
+on-link evidence, all possible interface identities, topology generation,
+`diag_ifindex` evidence, local/source-address evidence, and the relationship
+to the selected uplink.  A multipath route retains every modeled nexthop and
+is `Partial`; no ECMP flow hash is implemented.  `diag_ifindex` is evidence
+only: agreement supports the model, zero is unavailable, and conflict makes
+the result partial.  Local address checks are corroborating evidence and do
+not implement Linux source-address selection.
+
+Only authoritative topology can produce an attribution.  A degraded collector
+may continue using its last-known-good authoritative snapshot; its generation
+and degraded/partial staleness evidence remain visible.  Uncommitted topology and
+rejected socket candidates publish no route context.  SocketTracker bounds
+contexts to active socket generations, removes them on authoritative
+disappearance, and recomputes them after a committed topology change.
+Route context is retained as bounded current SocketTracker state and EventBus
+metadata; it is intentionally not encoded as fake numeric MetricStore series.
+
+This remains a modeled explanation, not guaranteed kernel forwarding.  Linux
+`ip rule`/RPDB policy, fwmarks, source-policy routing, VRFs, and custom table
+selection are not reproduced; such tables carry policy-limitation evidence.
+Loopback/local routes are represented as non-uplink where modeled.  No
+IncidentEngine, RootCauseEngine, D-Bus V2, process attribution, eBPF
+correlation, or other Phase 6+ functionality is part of this phase.
 
 ## Deferred work
 
-Phase 5.4 handles interface/egress attribution and route correlation. This
-phase does not implement process/cgroup attribution, eBPF correlation, packet
+Later phases still cover process/cgroup attribution, eBPF correlation, packet
 capture, active-probe or Wi-Fi redesign, IncidentEngine, RootCauseEngine, V2
-D-Bus, weaknetctl, or V1 TCP migration.
+D-Bus, weaknetctl, and V1 TCP migration.

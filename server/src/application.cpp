@@ -234,6 +234,14 @@ bool DaemonApplication::start() {
     socket_tracker_ = std::make_unique<v2::SocketTracker>(
         event_bus_, clock_, *netns, v2::SocketLifecycleConfig{},
         v2::SocketTracker::kInventoryInterval, test_hooks_.socket_tracker, &metric_store_);
+    socket_route_attributor_ = std::make_unique<v2::SocketRouteAttributor>();
+    socket_tracker_->setRouteAttributor(socket_route_attributor_.get());
+    topology_collector_->setCommittedCallback(
+        [this](const v2::TopologySnapshot& snapshot, const v2::UplinkSelection& uplink) {
+            if (socket_tracker_) socket_tracker_->recomputeRouteContexts(snapshot, uplink);
+        });
+    socket_tracker_->recomputeRouteContexts(topology_collector_->snapshot(),
+                                            topology_collector_->selectedUplink());
     if (!socket_tracker_->start()) {
         health_.set("socket_tracker", RuntimeHealthState::Degraded,
                     "transport_or_worker_start_failed");
@@ -408,6 +416,7 @@ void DaemonApplication::stop() noexcept {
     v2_adapter_.reset();
     topology_collector_.reset();
     socket_tracker_.reset();
+    socket_route_attributor_.reset();
     restoreSignalMask();
     health_.set("logger", RuntimeHealthState::Stopped);
     Logger::shutdown();

@@ -129,6 +129,7 @@ enum class EventKind : std::uint8_t {
     SocketObservation,
     TcpInfoObservation,
     TcpIntervalMetric,
+    SocketRouteObservation,
 };
 
 enum class EventSource : std::uint8_t {
@@ -232,6 +233,83 @@ struct TcpIntervalMetrics {
     std::optional<TcpMetricUnavailableReason> unavailable_reason;
 };
 
+enum class RouteAttributionStatus : std::uint8_t {
+    Available,
+    Partial,
+    Ambiguous,
+    Unavailable,
+};
+
+enum class RouteAttributionReason : std::uint64_t {
+    None = 0,
+    ExactModeledMatch = 1ULL << 0,
+    MultipathWithoutFlowHash = 1ULL << 1,
+    DiagIfindexAgrees = 1ULL << 2,
+    DiagIfindexConflicts = 1ULL << 3,
+    DiagIfindexUnavailable = 1ULL << 4,
+    TopologyNonAuthoritative = 1ULL << 5,
+    TopologyPartial = 1ULL << 6,
+    TopologyDegraded = 1ULL << 15,
+    NoModeledRoute = 1ULL << 7,
+    PolicyRoutingNotModeled = 1ULL << 8,
+    AmbiguousCandidate = 1ULL << 9,
+    GatewayEvidence = 1ULL << 10,
+    OnLinkEvidence = 1ULL << 11,
+    LocalRoute = 1ULL << 12,
+    LocalAddressAgrees = 1ULL << 13,
+    LocalAddressConflicts = 1ULL << 14,
+    MissingOutputInterface = 1ULL << 16,
+};
+
+constexpr RouteAttributionReason operator|(RouteAttributionReason left,
+                                            RouteAttributionReason right) noexcept {
+    return static_cast<RouteAttributionReason>(static_cast<std::uint64_t>(left) |
+                                                static_cast<std::uint64_t>(right));
+}
+constexpr RouteAttributionReason& operator|=(RouteAttributionReason& left,
+                                              RouteAttributionReason right) noexcept {
+    left = left | right;
+    return left;
+}
+
+enum class SelectedUplinkRelationship : std::uint8_t {
+    MatchesSelectedUplink,
+    DifferentFromSelectedUplink,
+    PossibleSelectedUplink,
+    NonUplinkLocal,
+    Unknown,
+};
+
+struct MatchedRouteSummary {
+    std::string identity;
+    std::uint8_t family{};
+    std::uint8_t prefix_length{};
+    std::uint32_t table{};
+    std::uint32_t priority{};
+    std::uint8_t type{};
+    std::optional<std::array<std::uint8_t, 16>> gateway;
+    std::optional<std::array<std::uint8_t, 16>> preferred_source;
+    std::vector<std::uint32_t> nexthop_ifindices;
+    std::vector<std::array<std::uint8_t, 16>> nexthop_gateways;
+    bool on_link{false};
+    bool multipath{false};
+};
+
+struct SocketRouteContextObservation {
+    SocketId socket_id;
+    NetnsId netns;
+    SocketEndpoint destination;
+    std::optional<MatchedRouteSummary> route;
+    std::vector<InterfaceId> possible_interfaces;
+    std::optional<InterfaceId> selected_interface;
+    SelectedUplinkRelationship uplink_relationship{SelectedUplinkRelationship::Unknown};
+    std::optional<std::uint32_t> diag_ifindex;
+    RouteAttributionStatus attribution_status{RouteAttributionStatus::Unavailable};
+    RouteAttributionReason reasons{RouteAttributionReason::None};
+    std::uint64_t topology_generation{};
+    bool topology_authoritative{false};
+};
+
 using TcpObservation = TcpInfoObservation;
 using TcpIntervalObservation = TcpIntervalMetrics;
 
@@ -305,7 +383,7 @@ using NetworkEventPayload = std::variant<
     LinkObservation, AddressObservation, RouteObservation, InterfaceObservation, UplinkObservation, ProbeRttObservation,
     TcpLossObservation, TrafficObservation, WifiRssiObservation,
     CollectorHealthObservation, SocketObservation, TcpInfoObservation,
-    TcpIntervalMetrics>;
+    TcpIntervalMetrics, SocketRouteContextObservation>;
 
 struct NetworkEventHeader {
     std::uint16_t schema_version{kNetworkEventSchemaVersion};

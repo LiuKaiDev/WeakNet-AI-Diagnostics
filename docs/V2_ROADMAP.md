@@ -182,12 +182,12 @@ Tests:
 
 ## Phase 5: SocketTracker and trustworthy TCP metrics
 
-Status: Phase 5.1, Phase 5.2 inventory, and the authorized Phase 5.3 TCP_INFO
+Status: Phase 5.1 through the authorized Phase 5.4 modeled route-attribution
 increment are implemented. Socket identity, transactional IPv4+IPv6
 NETLINK_SOCK_DIAG snapshots, variable-size TCP_INFO parsing, and same-generation
-interval metrics are present. TCP state and `idiag_if` remain metadata, not
-routed-egress attribution. Interface/egress attribution and route correlation
-remain deferred to Phase 5.4.
+interval metrics are present. TCP state and `idiag_if` remain evidence, not
+guaranteed routed-egress attribution. Phase 5.4 adds deterministic attribution
+from the committed Phase 4 topology model.
 
 Objective: turn existing sock_diag/TCP_INFO inspection into stable per-socket observability.
 
@@ -200,6 +200,19 @@ Scope:
 - reset baselines on socket/generation changes and counter resets;
 - publish socket lifecycle/TCP metric events and store bounded history;
 - retire the V1 aggregate “TCP loss” implementation after compatibility output is mapped to valid data or marked unavailable.
+
+Phase 5.4 additions:
+
+- match socket destinations against committed modeled IPv4/IPv6 routes using
+  longest prefix and Phase 4 table/metric policy;
+- retain route/interface/gateway, multipath, source-address, `diag_ifindex`,
+  selected-uplink, authority, and ambiguity evidence as a typed context;
+- recompute active contexts after committed topology changes without a second
+  per-socket route query.
+
+The result is explicitly not Linux policy-routing completeness: `ip rule`,
+fwmark, source-policy routing, VRF semantics, custom policy table selection,
+and ECMP flow hashing remain out of scope.
 
 Acceptance criteria:
 

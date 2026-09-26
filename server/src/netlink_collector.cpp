@@ -211,6 +211,12 @@ void NetlinkCollector::stop() noexcept {
 
 TopologySnapshot NetlinkCollector::snapshot() const { return state_.snapshot(); }
 UplinkSelection NetlinkCollector::selectedUplink() const { std::lock_guard lock(mutex_); return selected_; }
+
+void NetlinkCollector::setCommittedCallback(
+    std::function<void(const TopologySnapshot&, const UplinkSelection&)> callback) {
+    std::lock_guard lock(mutex_);
+    test_hooks_.committed_callback = std::move(callback);
+}
 NetlinkCollectorTelemetry NetlinkCollector::telemetry() const {
     std::lock_guard lock(mutex_);
     auto result = telemetry_;
@@ -351,6 +357,8 @@ void NetlinkCollector::markReconciliationFailed() {
     ++telemetry_.failed_dumps;
     telemetry_.degraded = true;
     if (telemetry_.last_error.empty()) telemetry_.last_error = "reconciliation_failed";
+    auto snapshot = state_.snapshot();
+    if (snapshot.authoritative) { snapshot.degraded = true; state_.replace(snapshot); }
 }
 
 void NetlinkCollector::markNotificationRace() {
@@ -360,6 +368,8 @@ void NetlinkCollector::markNotificationRace() {
     ++telemetry_.resync_requests;
     telemetry_.degraded = true;
     telemetry_.last_error = "notification_raced_reconciliation";
+    auto snapshot = state_.snapshot();
+    if (snapshot.authoritative) { snapshot.degraded = true; state_.replace(snapshot); }
 }
 
 void NetlinkCollector::markOverflow() {
@@ -369,6 +379,8 @@ void NetlinkCollector::markOverflow() {
     ++telemetry_.resync_requests;
     telemetry_.degraded = true;
     telemetry_.last_error = "netlink_receive_overflow";
+    auto snapshot = state_.snapshot();
+    if (snapshot.authoritative) { snapshot.degraded = true; state_.replace(snapshot); }
 }
 
 bool NetlinkCollector::processNotificationBatch(const std::vector<ParsedMessage>& messages) {
@@ -404,13 +416,18 @@ bool NetlinkCollector::processNotificationBatch(const std::vector<ParsedMessage>
         changed = changed || result == TopologyApplyResult::Changed;
     }
     if (changed) {
-        const auto after = candidate.snapshot();
+        auto after = candidate.snapshot();
+        after.degraded = false;
+        after.generation = before.generation + 1;
         state_.replace(after);
         {
             std::lock_guard lock(mutex_);
             selected_ = UplinkPolicy{}.select(after);
         }
         publishChanges(before, after);
+        std::function<void(const TopologySnapshot&, const UplinkSelection&)> callback;
+        { std::lock_guard lock(mutex_); callback = test_hooks_.committed_callback; }
+        if (callback) callback(after, UplinkPolicy{}.select(after));
     }
     std::lock_guard lock(mutex_);
     telemetry_.notifications_processed += messages.size();
@@ -420,13 +437,18 @@ bool NetlinkCollector::processNotificationBatch(const std::vector<ParsedMessage>
 void NetlinkCollector::commitReconciliation(TopologySnapshot candidate) {
     candidate.authoritative = true;
     candidate.partial = false;
+    candidate.degraded = false;
     const auto before = state_.snapshot();
+    candidate.generation = before.generation + 1;
     state_.replace(candidate);
     {
         std::lock_guard lock(mutex_);
         selected_ = UplinkPolicy{}.select(candidate);
     }
     publishChanges(before, candidate);
+    std::function<void(const TopologySnapshot&, const UplinkSelection&)> callback;
+    { std::lock_guard lock(mutex_); callback = test_hooks_.committed_callback; }
+    if (callback) callback(candidate, UplinkPolicy{}.select(candidate));
     {
         std::lock_guard lock(mutex_);
         ++telemetry_.successful_reconciliations;

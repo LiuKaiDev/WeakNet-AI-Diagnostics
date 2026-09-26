@@ -50,6 +50,9 @@ struct NetlinkCollectorTestHooks {
     std::function<std::optional<TopologySnapshot>(std::stop_token)> reconcile;
     std::function<void(bool)> reconciliation_complete;
     std::function<bool()> inject_overflow;
+    // Also used by the application as the bounded topology-change hook.  It
+    // is invoked only after a committed authoritative/current model update.
+    std::function<void(const TopologySnapshot&, const UplinkSelection&)> committed_callback;
     std::chrono::milliseconds recovery_retry_initial{std::chrono::milliseconds(250)};
     std::chrono::milliseconds recovery_retry_max{std::chrono::seconds(5)};
 };
@@ -80,6 +83,7 @@ public:
     bool start();
     void stop() noexcept;
     bool running() const noexcept { return running_.load(); }
+    void setCommittedCallback(std::function<void(const TopologySnapshot&, const UplinkSelection&)> callback);
     TopologySnapshot snapshot() const;
     UplinkSelection selectedUplink() const;
     NetlinkCollectorTelemetry telemetry() const;

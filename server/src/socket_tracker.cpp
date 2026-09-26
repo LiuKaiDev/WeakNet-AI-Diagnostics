@@ -345,6 +345,39 @@ void SocketTracker::publishCommitted(const std::vector<SocketObservation>& befor
     for (const auto& item : after) if (changed(item)) publish(item);
     for (const auto& item : closed) publish(item);
 
+    SocketRouteAttributor* attributor = nullptr;
+    TopologySnapshot topology;
+    UplinkSelection uplink;
+    {
+        std::lock_guard lock(mutex_);
+        attributor = route_attributor_;
+        topology = route_topology_;
+        uplink = route_uplink_;
+    }
+    if (attributor) {
+        std::vector<SocketRouteContextObservation> contexts;
+        {
+            std::lock_guard lock(mutex_);
+            for (const auto& item : closed) route_contexts_.erase(item.id);
+            for (const auto& item : after) {
+                auto context = attributor->attribute(item, topology, uplink);
+                route_contexts_[item.id] = context;
+                contexts.push_back(std::move(context));
+            }
+        }
+        for (const auto& context : contexts) {
+            NetworkEventHeader header{kNetworkEventSchemaVersion,
+                EventId{next_event_id_.fetch_add(1)}, {}, EventKind::SocketRouteObservation,
+                EventSource::SocketTracker, clock_.realtimeNow(), clock_.monotonicNow(),
+                context.netns, context.selected_interface, context.socket_id,
+                context.attribution_status == RouteAttributionStatus::Available ? Validity::Valid :
+                    context.attribution_status == RouteAttributionStatus::Ambiguous ? Validity::Partial :
+                    context.attribution_status == RouteAttributionStatus::Unavailable ? Validity::Unavailable : Validity::Partial,
+                std::nullopt};
+            (void)bus_.publish(NetworkEvent(std::move(header), context));
+        }
+    }
+
     std::vector<TcpInfoObservation> raw_events;
     std::vector<TcpIntervalMetrics> interval_events;
     const auto recordReason = [&](TcpMetricUnavailableReason reason) {
@@ -516,6 +549,46 @@ std::vector<SocketObservation> SocketTracker::active() const {
 }
 
 bool SocketTracker::reconcileForTests() { return reconcile({}); }
+
+void SocketTracker::setRouteAttributor(SocketRouteAttributor* attributor) {
+    std::lock_guard lock(mutex_);
+    route_attributor_ = attributor;
+}
+
+void SocketTracker::recomputeRouteContexts(const TopologySnapshot& topology,
+                                           const UplinkSelection& selected_uplink) {
+    SocketRouteAttributor* attributor = nullptr;
+    const auto active_sockets = active();
+    {
+        std::lock_guard lock(mutex_);
+        route_topology_ = topology;
+        route_uplink_ = selected_uplink;
+        attributor = route_attributor_;
+        route_contexts_.clear();
+    }
+    if (!attributor) return;
+    for (const auto& item : active_sockets) {
+        auto context = attributor->attribute(item, topology, selected_uplink);
+        {
+            std::lock_guard lock(mutex_);
+            route_contexts_[item.id] = context;
+        }
+        NetworkEventHeader header{kNetworkEventSchemaVersion,
+            EventId{next_event_id_.fetch_add(1)}, {}, EventKind::SocketRouteObservation,
+            EventSource::SocketTracker, clock_.realtimeNow(), clock_.monotonicNow(),
+            context.netns, context.selected_interface, context.socket_id,
+            context.attribution_status == RouteAttributionStatus::Available ? Validity::Valid :
+                context.attribution_status == RouteAttributionStatus::Ambiguous ? Validity::Partial :
+                context.attribution_status == RouteAttributionStatus::Unavailable ? Validity::Unavailable : Validity::Partial,
+            std::nullopt};
+        (void)bus_.publish(NetworkEvent(std::move(header), context));
+    }
+}
+
+std::map<SocketId, SocketRouteContextObservation> SocketTracker::routeContexts() const {
+    std::lock_guard lock(mutex_);
+    return route_contexts_;
+}
 
 SocketTrackerTelemetry SocketTracker::telemetry() const {
     SocketTrackerTelemetry result;

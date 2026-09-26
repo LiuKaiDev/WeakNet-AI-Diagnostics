@@ -21,6 +21,7 @@
 #include "clock.hpp"
 #include "metric_store.hpp"
 #include "scoped_fd.hpp"
+#include "socket_route_attributor.hpp"
 
 namespace weaknet_dbus::v2 {
 
@@ -179,6 +180,10 @@ public:
     std::vector<SocketObservation> active() const;
     SocketTrackerTelemetry telemetry() const;
     bool reconcileForTests();
+    void setRouteAttributor(SocketRouteAttributor* attributor);
+    void recomputeRouteContexts(const TopologySnapshot& topology,
+                                const UplinkSelection& selected_uplink);
+    std::map<SocketId, SocketRouteContextObservation> routeContexts() const;
 
 private:
     bool openSocket();
@@ -201,6 +206,10 @@ private:
     mutable std::mutex mutex_;
     mutable std::mutex lifecycle_mutex_;
     std::map<SocketId, TcpInfoObservation> tcp_baselines_;
+    SocketRouteAttributor* route_attributor_{nullptr};
+    TopologySnapshot route_topology_{};
+    UplinkSelection route_uplink_{};
+    std::map<SocketId, SocketRouteContextObservation> route_contexts_;
     SocketTrackerTelemetry telemetry_;
     std::jthread worker_;
     std::atomic<bool> running_{false};
