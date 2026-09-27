@@ -109,6 +109,8 @@ add_library(weaknet_data_plane STATIC
     server/src/netlink_parser.cpp
     server/src/netlink_topology.cpp
     server/src/netlink_collector.cpp
+    server/src/wifi_nl80211_parser.cpp
+    server/src/wifi_collector.cpp
 )
 target_link_libraries(weaknet_data_plane
     PUBLIC

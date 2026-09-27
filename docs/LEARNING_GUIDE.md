@@ -36,6 +36,9 @@ engine documents.
 The first ActiveProbe evidence collector and RootCauseEngine enrichment are
 implemented; read `docs/ACTIVE_PROBE.md` and `docs/ROOT_CAUSE_ENGINE.md` before
 treating probe observations as diagnosis.
+The first native Wi-Fi evidence collector is also implemented; read
+`docs/WIFI_EVIDENCE.md` before treating RSSI, association, retry counters, or
+bitrate as network-health conclusions.
 SocketTracker now provides the Phase 5.3 TCP_INFO metric path and Phase 5.4
 modeled route context. The first deterministic IncidentEngine stage is
 implemented; its incidents are not root causes and
@@ -238,6 +241,14 @@ Run or inspect the namespace integration tests; do not infer correctness solely 
 For probes, follow binding, request IDs, reply matching, monotonic timing, cancellation, rate limiting, and validity. Confirm that target reachability does not overwrite physical link state.
 
 For Wi-Fi, read nl80211 first and any read-only wpa_supplicant fallback second. Confirm that wired RSSI is “not applicable” and that the daemon never starts or reconfigures a network manager.
+
+In the current V2 implementation, follow `WifiCollector` through its
+Phase-4-selected `NetnsId + ifindex` target, Generic Netlink family
+resolution, typed parser, bounded worker, and `WifiObservation` EventBus
+event. Study signed dBm parsing, 100-kbit/s-to-kbps conversion, station
+absence versus query failure, optional counters, and explicit capability
+states. The V1 wpa_supplicant path remains compatibility code and is not the
+V2 source of truth.
 
 ### 11. Read `IncidentEngine`
 

@@ -80,6 +80,18 @@ int main() {
 
     {
         weaknet_dbus::ApplicationTestHooks hooks;
+        hooks.fail_optional_component = "wifi";
+        weaknet_dbus::DaemonApplication application(makeConfig(root, "wifi-degraded"), hooks);
+        ok &= expect(application.start(), "Wi-Fi collector failure killed startup");
+        ok &= expect(hasHealth(application.health(), "wifi",
+                               weaknet_dbus::RuntimeHealthState::Degraded,
+                               "injected_failure"),
+                     "Wi-Fi collector failure was not reported as degraded health");
+        application.stop();
+    }
+
+    {
+        weaknet_dbus::ApplicationTestHooks hooks;
         hooks.netlink_collector.open_socket = [] {
             return ::eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
         };

@@ -268,6 +268,12 @@ Tests:
 
 ## Phase 7: Remaining collectors and validity-aware quality
 
+The first Wi-Fi evidence slice is implemented: `WifiCollector` uses native
+Generic Netlink/nl80211 with typed optional fields, signed RSSI parsing,
+exact-kbps bitrate conversion, bounded polling, selected-interface identity,
+and degraded capability states. It is additive to the V1 RSSI path. It does
+not add Wi-Fi incidents or RootCauseEngine rules; see `docs/WIFI_EVIDENCE.md`.
+
 Objective: migrate active probing and Wi-Fi facts, then expose a trustworthy deterministic health view.
 
 Scope:

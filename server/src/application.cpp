@@ -249,6 +249,7 @@ bool DaemonApplication::start() {
         [this](const v2::TopologySnapshot& snapshot, const v2::UplinkSelection& uplink) {
             if (socket_tracker_) socket_tracker_->recomputeRouteContexts(snapshot, uplink);
             if (active_probe_) active_probe_->updateTopology(snapshot, uplink);
+            if (wifi_collector_) wifi_collector_->updateTopology(snapshot, uplink);
         });
     socket_tracker_->recomputeRouteContexts(topology_collector_->snapshot(),
                                             topology_collector_->selectedUplink());
@@ -263,6 +264,22 @@ bool DaemonApplication::start() {
     } else {
         health_.set("active_probe", RuntimeHealthState::Running);
         v2_adapter_->mirrorCollectorHealth("active_probe", v2::CollectorState::Running);
+    }
+    wifi_collector_ = std::make_unique<v2::WifiCollector>(
+        event_bus_, clock_, *netns, v2::WifiCollectorConfig{}, test_hooks_.wifi_collector);
+    wifi_collector_->updateTopology(topology_collector_->snapshot(),
+                                    topology_collector_->selectedUplink());
+    if (test_hooks_.fail_optional_component == "wifi") {
+        health_.set("wifi", RuntimeHealthState::Degraded, "injected_failure");
+        v2_adapter_->mirrorCollectorHealth("wifi", v2::CollectorState::Degraded,
+                                           "injected_failure");
+    } else if (!wifi_collector_->start()) {
+        health_.set("wifi", RuntimeHealthState::Degraded, "worker_start_failed");
+        v2_adapter_->mirrorCollectorHealth("wifi", v2::CollectorState::Degraded,
+                                           "worker_start_failed");
+    } else {
+        health_.set("wifi", RuntimeHealthState::Running);
+        v2_adapter_->mirrorCollectorHealth("wifi", v2::CollectorState::Running);
     }
     if (!socket_tracker_->start()) {
         health_.set("socket_tracker", RuntimeHealthState::Degraded,
@@ -424,6 +441,8 @@ void DaemonApplication::stop() noexcept {
     if (root_cause_engine_) root_cause_engine_->stop();
     if (incident_engine_) incident_engine_->stop();
     if (active_probe_) active_probe_->stop();
+    if (wifi_collector_) wifi_collector_->stop();
+    health_.set("wifi", RuntimeHealthState::Stopped);
     if (socket_tracker_) socket_tracker_->stop();
     health_.set("socket_tracker", RuntimeHealthState::Stopped);
     if (topology_collector_) topology_collector_->stop();
@@ -445,6 +464,7 @@ void DaemonApplication::stop() noexcept {
     diagnostics_query_.reset();
     v2_adapter_.reset();
     active_probe_.reset();
+    wifi_collector_.reset();
     topology_collector_.reset();
     socket_tracker_.reset();
     socket_route_attributor_.reset();

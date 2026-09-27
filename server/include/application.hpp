@@ -22,6 +22,7 @@
 #include "root_cause_engine.hpp"
 #include "diagnostics_query.hpp"
 #include "active_probe.hpp"
+#include "wifi_collector.hpp"
 
 namespace weaknet_dbus {
 
@@ -33,6 +34,7 @@ struct ApplicationTestHooks {
         ping_operation;
     v2::NetlinkCollectorTestHooks netlink_collector;
     v2::SocketTrackerTestHooks socket_tracker;
+    v2::WifiCollectorTestHooks wifi_collector;
 };
 
 class DaemonApplication {
@@ -76,6 +78,7 @@ private:
     std::unique_ptr<v2::RootCauseEngine> root_cause_engine_;
     std::unique_ptr<v2::DiagnosticsQueryService> diagnostics_query_;
     std::unique_ptr<v2::ActiveProbe> active_probe_;
+    std::unique_ptr<v2::WifiCollector> wifi_collector_;
     std::stop_source stop_source_;
     std::atomic<bool> started_{false};
     std::atomic<bool> stopped_{false};

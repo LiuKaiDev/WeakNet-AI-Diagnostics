@@ -51,6 +51,10 @@ weaknet_add_cpp_test(active_probe active_probe_test.cpp)
 target_link_libraries(active_probe PRIVATE weaknet_data_plane)
 set_tests_properties(active_probe PROPERTIES LABELS "phase11")
 
+weaknet_add_cpp_test(wifi_nl80211 wifi_nl80211_test.cpp)
+target_link_libraries(wifi_nl80211 PRIVATE weaknet_data_plane)
+set_tests_properties(wifi_nl80211 PROPERTIES LABELS "phase7")
+
 weaknet_add_cpp_test(event_bus_concurrency event_bus_test.cpp)
 target_link_libraries(event_bus_concurrency PRIVATE weaknet_data_plane Threads::Threads)
 set_tests_properties(event_bus_concurrency PROPERTIES LABELS "phase3;concurrency")

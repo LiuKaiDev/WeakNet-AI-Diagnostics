@@ -71,6 +71,7 @@ EventKind NetworkEvent::kindFor(const NetworkEventPayload& payload) noexcept {
         if constexpr (std::is_same_v<T, RootCauseHypothesisObservation>)
             return EventKind::RootCauseHypothesisObservation;
         if constexpr (std::is_same_v<T, ProbeObservation>) return EventKind::ProbeObservation;
+        if constexpr (std::is_same_v<T, WifiObservation>) return EventKind::WifiObservation;
         return EventKind::CollectorHealth;
     }, payload);
 }
@@ -142,6 +143,15 @@ NetworkEvent::NetworkEvent(NetworkEventHeader header, NetworkEventPayload payloa
              *header_.interface != *probe->target.interface))
             throw std::invalid_argument("ProbeObservation namespace/identity mismatch");
     }
+    if (const auto* wifi = std::get_if<WifiObservation>(&payload_)) {
+        if (wifi->netns != header_.netns ||
+            (wifi->interface && wifi->interface->ifindex == 0) ||
+            header_.interface != wifi->interface ||
+            header_.source != EventSource::WifiCollector ||
+            wifi->source != EventSource::WifiCollector) {
+            throw std::invalid_argument("WifiObservation namespace/identity mismatch");
+        }
+    }
     if (header_.kind != kindFor(payload_)) {
         throw std::invalid_argument("NetworkEvent header kind does not match payload");
     }
@@ -167,6 +177,7 @@ bool NetworkEvent::replaceable() const noexcept {
         case EventKind::IncidentObservation:
         case EventKind::RootCauseHypothesisObservation:
         case EventKind::ProbeObservation:
+        case EventKind::WifiObservation:
             return false;
     }
     return false;

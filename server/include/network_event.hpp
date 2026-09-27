@@ -134,6 +134,7 @@ enum class EventKind : std::uint8_t {
     IncidentObservation,
     RootCauseHypothesisObservation,
     ProbeObservation,
+    WifiObservation,
 };
 
 enum class EventSource : std::uint8_t {
@@ -149,6 +150,7 @@ enum class EventSource : std::uint8_t {
     IncidentEngine,
     RootCauseEngine,
     ActiveProbe,
+    WifiCollector,
 };
 
 enum class SocketLifecycleState : std::uint8_t {
@@ -604,6 +606,58 @@ struct TrafficObservation {
 
 struct WifiRssiObservation { std::optional<std::int32_t> dbm; };
 
+enum class WifiLinkState : std::uint8_t {
+    Unknown,
+    NotWifi,
+    NotAssociated,
+    Associated,
+};
+
+enum class WifiCapability : std::uint8_t {
+    Available,
+    NotWifi,
+    NotAssociated,
+    Unsupported,
+    PermissionDenied,
+    TransportUnavailable,
+    Error,
+    NoTarget,
+};
+
+struct WifiBssid {
+    std::array<std::uint8_t, 6> address{};
+    auto operator<=>(const WifiBssid&) const = default;
+};
+
+struct WifiObservation {
+    NetnsId netns;
+    std::optional<InterfaceId> interface;
+    std::uint64_t interface_generation{};
+    WifiLinkState link_state{WifiLinkState::Unknown};
+    WifiCapability capability{WifiCapability::Error};
+    std::optional<std::uint32_t> nl80211_iftype;
+    std::optional<WifiBssid> bssid;
+    // SSID bytes are length-delimited and may contain non-printable bytes.
+    std::optional<std::string> ssid;
+    std::optional<std::uint32_t> frequency_mhz;
+    std::optional<std::int32_t> signal_dbm;
+    std::optional<std::int32_t> signal_avg_dbm;
+    std::optional<std::uint32_t> tx_bitrate_kbps;
+    std::optional<std::uint32_t> rx_bitrate_kbps;
+    std::optional<std::uint64_t> tx_retries;
+    std::optional<std::uint64_t> tx_failed;
+    std::optional<std::uint64_t> rx_packets;
+    std::optional<std::uint64_t> tx_packets;
+    std::optional<std::uint64_t> rx_bytes;
+    std::optional<std::uint64_t> tx_bytes;
+    RealtimeTime observed_at{};
+    MonotonicTime monotonic_at{};
+    EventSource source{EventSource::WifiCollector};
+    Validity validity{Validity::Unavailable};
+    std::string status;
+    auto operator<=>(const WifiObservation&) const = default;
+};
+
 enum class CollectorState : std::uint8_t {
     Starting, Running, Disabled, Degraded, Failed, Stopped
 };
@@ -618,7 +672,7 @@ using NetworkEventPayload = std::variant<
     TcpLossObservation, TrafficObservation, WifiRssiObservation,
     CollectorHealthObservation, SocketObservation, TcpInfoObservation,
     TcpIntervalMetrics, SocketRouteContextObservation, IncidentObservation,
-    RootCauseHypothesisObservation, ProbeObservation>;
+    RootCauseHypothesisObservation, ProbeObservation, WifiObservation>;
 
 struct NetworkEventHeader {
     std::uint16_t schema_version{kNetworkEventSchemaVersion};
