@@ -27,6 +27,9 @@ class LlmProviderResult:
     latency_ms: int | None = None
     finish_status: str = "completed"
     error: str | None = None
+    request_id: str = ""
+    provider_request_id: str | None = None
+    usage: dict[str, Any] | None = None
 
 
 class LlmProvider(Protocol):

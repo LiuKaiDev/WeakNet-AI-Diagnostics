@@ -350,9 +350,10 @@ A number in a README without its run artifact is an example, not evidence.
 
 Begin with `docs/AI_V2_ARCHITECTURE.md` and `ai/v2`: the versioned
 `DiagnosisSnapshot`, pure D-Bus-shaped adapter, deterministic prompt builder,
-provider protocol, fake provider, and grounding validator. The V2 explainer
-consumes structured diagnosis only and cannot change deterministic type or
-confidence. It makes zero external LLM calls in this stage.
+provider protocol, fake provider, opt-in `DashScopeProvider`, and grounding
+validator. The V2 explainer consumes structured diagnosis only and cannot
+change deterministic type or confidence. Normal tests make no external LLM
+calls; DashScope requires explicit selection and `DASHSCOPE_API_KEY`.
 
 The older `optional/experimental/log-analysis-tools` directory is legacy V1
 raw-log/RAG experimentation. It is intentionally not routed through AI V2 and

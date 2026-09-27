@@ -1,6 +1,8 @@
 import asyncio
 import copy
+import json
 import os
+from pathlib import Path
 import unittest
 
 from ai.v2.adapters.dbus import DbusDiagnosisAdapter
@@ -93,6 +95,14 @@ class DiagnosisContractTests(unittest.TestCase):
 
 
 class DbusAdapterTests(unittest.TestCase):
+    def test_current_dbus_golden_fixture_round_trips_through_explainer(self):
+        fixture = Path(__file__).with_name("fixtures") / "get_diagnosis_current.json"
+        snapshot = DbusDiagnosisAdapter().from_dict(json.loads(fixture.read_text()))
+        report = EvidenceExplainerService(FakeLlmProvider()).explain_sync(snapshot, "golden")
+        self.assertEqual(snapshot.status, "Degraded")
+        self.assertEqual(snapshot.topology["selected_uplink"], "wlan0")
+        self.assertEqual(report.hypotheses[0].type, "LocalLinkSuspected")
+
     def test_get_diagnosis_shape_maps_without_integer_enum_ordinals(self):
         payload = {
             "status": {"state": "Degraded", "timestamp_ms": 100},

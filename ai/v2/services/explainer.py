@@ -7,6 +7,18 @@ import copy
 from dataclasses import dataclass, field
 from typing import Optional
 
+from ..errors import (
+    AiLayerError,
+    GroundingValidationError,
+    InvalidDiagnosisInput,
+    InvalidProviderOutput,
+    ProviderAuthenticationError,
+    ProviderRateLimited,
+    ProviderRequestError,
+    ProviderServerError,
+    ProviderTimeout,
+    ProviderUnavailable,
+)
 from ..providers.base import LlmProvider
 from ..prompts.evidence_explainer import EvidenceExplainerPromptBuilder
 from ..schemas.diagnosis import DiagnosisSnapshot, DiagnosisValidationError, InputTooLarge
@@ -17,30 +29,6 @@ from ..schemas.explanation import (
     ProviderExplanationPayload,
 )
 from ..validation.grounding import GroundingValidator, GroundingViolation
-
-
-class AiLayerError(RuntimeError):
-    category = "InternalError"
-
-
-class InvalidDiagnosisInput(AiLayerError):
-    category = "InvalidDiagnosisInput"
-
-
-class ProviderUnavailable(AiLayerError):
-    category = "ProviderUnavailable"
-
-
-class ProviderTimeout(AiLayerError):
-    category = "ProviderTimeout"
-
-
-class InvalidProviderOutput(AiLayerError):
-    category = "InvalidProviderOutput"
-
-
-class GroundingValidationError(AiLayerError):
-    category = "GroundingViolation"
 
 
 @dataclass
@@ -65,12 +53,14 @@ class EvidenceExplainerService:
             raise ProviderTimeout("LLM provider timed out") from exc
         except (ConnectionError, OSError) as exc:
             raise ProviderUnavailable(str(exc)) from exc
+        except InputTooLarge:
+            raise
         except AiLayerError:
             raise
         except Exception as exc:  # provider boundary: never leak arbitrary provider errors
             raise ProviderUnavailable(str(exc)) from exc
 
-        if result.error or result.finish_status not in ("completed", "success"):
+        if result.error or result.finish_status not in ("completed", "success", "stop"):
             raise ProviderUnavailable(result.error or "provider did not complete")
         try:
             payload = ProviderExplanationPayload.from_dict(result.structured_payload)
@@ -80,7 +70,8 @@ class EvidenceExplainerService:
             self.grounding_validator.validate(normalized, payload)
         except GroundingViolation as exc:
             raise GroundingValidationError(str(exc)) from exc
-        return self._report(normalized, payload, result.provider, result.model, request_id)
+        return self._report(normalized, payload, result.provider, result.model, request_id,
+                            result.latency_ms, result.provider_request_id, result.finish_status)
 
     def explain_sync(self, snapshot: DiagnosisSnapshot, request_id: str = "") -> ExplanationReport:
         return asyncio.run(self.explain(snapshot, request_id))
@@ -90,8 +81,8 @@ class EvidenceExplainerService:
 
     @staticmethod
     def _report(snapshot: DiagnosisSnapshot, payload: ProviderExplanationPayload,
-                provider: str, model: str, request_id: str) -> ExplanationReport:
-        hypothesis_by_id = {item.hypothesis_id: item for item in snapshot.hypotheses}
+                provider: str, model: str, request_id: str, latency_ms: int | None = None,
+                provider_request_id: str | None = None, finish_status: str = "completed") -> ExplanationReport:
         provider_by_id = {item.hypothesis_id: item for item in payload.hypothesis_explanations}
         explained: list[ExplainedHypothesis] = []
         for hypothesis in snapshot.hypotheses:
@@ -117,8 +108,13 @@ class EvidenceExplainerService:
             deterministic_status=snapshot.status,
             provider=provider,
             model=model,
-            simulated=payload.simulated or provider == "fake",
+            # Provider metadata, not model-controlled payload fields, defines
+            # whether the execution was simulated.
+            simulated=provider == "fake",
             summary=payload.summary,
             hypotheses=explained,
             limitations=limitations,
+            latency_ms=latency_ms,
+            provider_request_id=provider_request_id,
+            finish_status=finish_status,
         )

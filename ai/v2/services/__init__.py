@@ -8,10 +8,15 @@ from .explainer import (
     InvalidProviderOutput,
     ProviderTimeout,
     ProviderUnavailable,
+    ProviderAuthenticationError,
+    ProviderRateLimited,
+    ProviderRequestError,
+    ProviderServerError,
 )
 
 __all__ = [
     "AiLayerError", "EvidenceExplainerService", "GroundingValidationError",
     "InvalidDiagnosisInput", "InvalidProviderOutput", "ProviderTimeout",
-    "ProviderUnavailable",
+    "ProviderUnavailable", "ProviderAuthenticationError", "ProviderRateLimited",
+    "ProviderRequestError", "ProviderServerError",
 ]

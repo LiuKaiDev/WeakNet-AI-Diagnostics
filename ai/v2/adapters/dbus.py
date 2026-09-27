@@ -46,8 +46,6 @@ class DbusDiagnosisAdapter:
             "snapshot_timestamp_ms",
             payload.get("timestamp_ms", status_payload.get("timestamp_ms")),
         )
-        if timestamp is None:
-            raise DiagnosisValidationError("D-Bus diagnosis timestamp_ms is required")
 
         raw_incidents = payload.get("incidents")
         raw_hypotheses = payload.get("hypotheses")
@@ -61,7 +59,10 @@ class DbusDiagnosisAdapter:
             snapshot_timestamp_ms=timestamp,
             status=status,
             limitations=list(payload.get("limitations", [])),
-            topology=payload.get("topology"),
+            topology=payload.get("topology") or (
+                {"selected_uplink": payload["selected_uplink"]}
+                if "selected_uplink" in payload else None
+            ),
             incidents=incidents,
             hypotheses=hypotheses,
             limits=self.limits,
@@ -79,7 +80,10 @@ class DbusDiagnosisAdapter:
         for item in payload.get("evidence", []):
             if not isinstance(item, Mapping):
                 raise DiagnosisValidationError("D-Bus incident evidence must be an object")
-            evidence.append(Evidence.from_dict(item, EvidenceRole.SUPPORTING, self.limits))
+            normalized_item = dict(item)
+            if "kind" not in normalized_item and "source_kind" in normalized_item:
+                normalized_item["kind"] = normalized_item["source_kind"]
+            evidence.append(Evidence.from_dict(normalized_item, EvidenceRole.SUPPORTING, self.limits))
         return Incident.from_dict({
             "id": payload.get("id"),
             "type": payload.get("type"),
@@ -115,4 +119,4 @@ class DbusDiagnosisAdapter:
             "supporting_evidence": payload.get("supporting_evidence", []),
             "contradicting_evidence": payload.get("contradicting_evidence", []),
             "missing_evidence": payload.get("missing_evidence", []),
-        }, self.limits)
+        }, self.limits, require_timestamps=False)

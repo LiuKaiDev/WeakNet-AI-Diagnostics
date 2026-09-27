@@ -1,4 +1,4 @@
-"""AI V2.1 structured diagnosis explanation framework.
+"""AI V2.2 structured diagnosis explanation framework.
 
 This package makes no external network or model calls by itself.  The default
 provider is the deterministic fake provider used by tests and local demos.
@@ -19,6 +19,8 @@ from .schemas.explanation import (
     ExplanationReport,
     ProviderExplanationPayload,
 )
+from .providers.dashscope import DashScopeConfig, DashScopeProvider
+from .providers.factory import create_llm_provider, provider_capabilities
 
 __all__ = [
     "DIAGNOSIS_SCHEMA_VERSION",
@@ -32,4 +34,8 @@ __all__ = [
     "EXPLANATION_SCHEMA_VERSION",
     "ExplanationReport",
     "ProviderExplanationPayload",
+    "DashScopeConfig",
+    "DashScopeProvider",
+    "create_llm_provider",
+    "provider_capabilities",
 ]

@@ -1,6 +1,6 @@
-# AI V2.1: structured diagnosis contract and evidence explainer
+# AI V2.2: structured diagnosis contract and evidence explainer
 
-AI V2.1 is an optional Python presentation layer downstream of the
+AI V2.2 is an optional Python presentation layer downstream of the
 deterministic C++ diagnosis pipeline:
 
 ```text
@@ -49,8 +49,11 @@ missing evidence remain separate in both the input and final report.
 `DbusDiagnosisAdapter` is a pure transformation from a decoded V2
 `GetDiagnosis`-shaped dictionary to `DiagnosisSnapshot`. It accepts either the
 current top-level `state` shape or a nested `status.state` shape, preserves
-unknown string enum values, and fails explicitly when required fields are
-missing. It does not open D-Bus and does not depend on a live daemon.
+unknown string enum values, and fails explicitly when required collections or
+identity fields are missing. Fields not exposed by the current serializer (for
+example the snapshot timestamp and hypothesis timestamps) remain `None` rather
+than being fabricated. It does not open D-Bus and does not depend on a live
+daemon.
 
 Input is bounded by named limits: incident count, hypothesis count, evidence per
 item, total evidence, string length, and serialized bytes. Exceeding a limit
@@ -76,8 +79,11 @@ and output must be the requested structure without hidden reasoning.
 with system/user prompt, response schema version, request ID, and metadata.
 `FakeLlmProvider` is deterministic, makes no network calls, needs no API key,
 marks output `provider: fake` and `simulated: true`, and can inject a supplied
-or malformed payload for validator tests. No DashScope, Qwen, OpenAI, model
-download, embeddings, or RAG dependency is present.
+or malformed payload for validator tests. `DashScopeProvider` is the optional
+real provider, selected explicitly with `WEAKNET_LLM_PROVIDER=dashscope` and
+configured through `DASHSCOPE_API_KEY` / `WEAKNET_LLM_MODEL`. It uses an
+injectable bounded HTTPS transport, defaults to `qwen-plus`, and reports
+`simulated: false`. Missing credentials never fall back to fake output.
 
 Provider output may contain only summary/explanation text and references to
 existing IDs. `ProviderExplanationPayload` rejects unknown fields such as
@@ -97,19 +103,22 @@ provider unavailable/timeout, invalid provider output, grounding violation,
 and internal/provider-boundary failure. AI failures never map to network
 health state.
 
-## HTTP and legacy relationship
+## DashScope boundaries, HTTP, and legacy relationship
 
 FastAPI is not installed in this repository, so no HTTP surface is added in
-V2.1. A future read-only `/health/live`, `/v2/capabilities`, and
+V2.2. A future read-only `/health/live`, `/v2/capabilities`, and
 `/v2/explanations` adapter may wrap the same service without making a real
-provider the default. The legacy V1 raw-log/RAG scripts remain untouched and
-are not part of the C++ daemon availability path.
+provider the default. Capability reporting distinguishes configured from
+reachable. The legacy V1 raw-log/RAG scripts remain untouched and are not part
+of the C++ daemon availability path.
 
 ## Privacy and next stage
 
 Complete prompts are not logged by default. If future debug logging is added it
 must be explicit and disclose that addresses, interface metadata, and SSIDs may
-be present. AI V2.1 makes zero external LLM calls. The next stage may add a
-real DashScope/Qwen provider behind the same contract; it must not move
-authority out of the deterministic diagnosis engines.
-
+be present. DashScope requests use a 30-second overall deadline, a 64 KiB
+response bound, and at most two attempts for transport/429/5xx failures.
+Authentication, client, schema, and grounding failures are not retried. AI
+V2.2 makes no provider calls during normal tests; an opt-in live smoke test
+requires explicit selection, a flag, and an environment key. The provider must
+not move authority out of the deterministic diagnosis engines.

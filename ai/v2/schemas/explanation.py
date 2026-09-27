@@ -183,7 +183,7 @@ class ExplainedHypothesis:
 class ExplanationReport:
     schema_version: str
     request_id: str
-    diagnosis_snapshot_timestamp_ms: int
+    diagnosis_snapshot_timestamp_ms: int | None
     deterministic_status: str
     provider: str
     model: str
@@ -192,6 +192,9 @@ class ExplanationReport:
     hypotheses: list[ExplainedHypothesis]
     limitations: list[dict[str, Any]]
     validation_status: str = "validated"
+    latency_ms: int | None = None
+    provider_request_id: str | None = None
+    finish_status: str = "completed"
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -206,5 +209,7 @@ class ExplanationReport:
             "hypotheses": [item.to_dict() for item in self.hypotheses],
             "limitations": self.limitations,
             "validation_status": self.validation_status,
+            "latency_ms": self.latency_ms,
+            "provider_request_id": self.provider_request_id,
+            "finish_status": self.finish_status,
         }
-

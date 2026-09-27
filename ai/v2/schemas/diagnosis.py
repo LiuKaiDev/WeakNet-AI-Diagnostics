@@ -237,8 +237,8 @@ class RootCauseHypothesis:
     state: str
     confidence: str
     scope: Any
-    opened_at_ms: int
-    updated_at_ms: int
+    opened_at_ms: Optional[int]
+    updated_at_ms: Optional[int]
     supporting_evidence: list[Evidence] = field(default_factory=list)
     contradicting_evidence: list[Evidence] = field(default_factory=list)
     missing_evidence: list[Evidence] = field(default_factory=list)
@@ -246,7 +246,8 @@ class RootCauseHypothesis:
 
     @classmethod
     def from_dict(
-        cls, payload: Mapping[str, Any], limits: DiagnosisLimits = DiagnosisLimits()
+        cls, payload: Mapping[str, Any], limits: DiagnosisLimits = DiagnosisLimits(),
+        require_timestamps: bool = True,
     ) -> "RootCauseHypothesis":
         if not isinstance(payload, Mapping):
             raise DiagnosisValidationError("hypothesis must be an object")
@@ -257,8 +258,8 @@ class RootCauseHypothesis:
             state=_string(payload.get("state"), "hypothesis.state", limits),
             confidence=_string(str(payload.get("confidence")), "hypothesis.confidence", limits),
             scope=_scope(payload.get("scope"), limits),
-            opened_at_ms=_timestamp(payload.get("opened_at_ms"), "hypothesis.opened_at_ms", True),  # type: ignore[arg-type]
-            updated_at_ms=_timestamp(payload.get("last_updated_at_ms", payload.get("updated_at_ms")), "hypothesis.updated_at_ms", True),  # type: ignore[arg-type]
+            opened_at_ms=_timestamp(payload.get("opened_at_ms"), "hypothesis.opened_at_ms", require_timestamps),
+            updated_at_ms=_timestamp(payload.get("last_updated_at_ms", payload.get("updated_at_ms")), "hypothesis.updated_at_ms", require_timestamps),
             supporting_evidence=_evidence_list(
                 (Evidence.from_dict(item, EvidenceRole.SUPPORTING, limits) for item in payload.get("supporting_evidence", [])),
                 limits, "hypothesis.supporting_evidence",
@@ -296,7 +297,7 @@ class RootCauseHypothesis:
 @dataclass
 class DiagnosisSnapshot:
     schema_version: str
-    snapshot_timestamp_ms: int
+    snapshot_timestamp_ms: Optional[int]
     status: str
     limitations: list[str]
     topology: Optional[dict[str, Any]]
@@ -309,17 +310,19 @@ class DiagnosisSnapshot:
 
     @classmethod
     def from_dict(
-        cls, payload: Mapping[str, Any], limits: DiagnosisLimits = DiagnosisLimits()
+        cls, payload: Mapping[str, Any], limits: DiagnosisLimits = DiagnosisLimits(),
+        require_timestamp: bool = True, require_hypothesis_timestamps: bool = True,
     ) -> "DiagnosisSnapshot":
         if not isinstance(payload, Mapping):
             raise DiagnosisValidationError("diagnosis snapshot must be an object")
         if payload.get("schema_version") != DIAGNOSIS_SCHEMA_VERSION:
             raise DiagnosisValidationError("unsupported diagnosis schema_version")
         incidents = [Incident.from_dict(item, limits) for item in payload.get("incidents", [])]
-        hypotheses = [RootCauseHypothesis.from_dict(item, limits) for item in payload.get("hypotheses", [])]
+        hypotheses = [RootCauseHypothesis.from_dict(item, limits, require_hypothesis_timestamps)
+                      for item in payload.get("hypotheses", [])]
         snapshot = cls(
             schema_version=payload["schema_version"],
-            snapshot_timestamp_ms=_timestamp(payload.get("snapshot_timestamp_ms"), "snapshot_timestamp_ms", True),  # type: ignore[arg-type]
+            snapshot_timestamp_ms=_timestamp(payload.get("snapshot_timestamp_ms"), "snapshot_timestamp_ms", require_timestamp),  # type: ignore[arg-type]
             status=_string(payload.get("status"), "status", limits),
             limitations=[_string(item, "limitation", limits) for item in payload.get("limitations", [])],
             topology=_copy_json_value(payload.get("topology"), limits, "topology"),
@@ -356,13 +359,16 @@ class DiagnosisSnapshot:
         return result
 
     def normalized_copy(self) -> "DiagnosisSnapshot":
-        return DiagnosisSnapshot.from_dict(self.to_dict(), self.limits)
+        return DiagnosisSnapshot.from_dict(
+            self.to_dict(), self.limits, require_timestamp=False,
+            require_hypothesis_timestamps=False,
+        )
 
     def validate(self) -> None:
         self.limits.validate()
         if self.schema_version != DIAGNOSIS_SCHEMA_VERSION:
             raise DiagnosisValidationError("unsupported diagnosis schema_version")
-        _timestamp(self.snapshot_timestamp_ms, "snapshot_timestamp_ms", True)
+        _timestamp(self.snapshot_timestamp_ms, "snapshot_timestamp_ms")
         _string(self.status, "status", self.limits)
         if len(self.incidents) > self.limits.max_incidents:
             raise InputTooLarge("too many incidents")

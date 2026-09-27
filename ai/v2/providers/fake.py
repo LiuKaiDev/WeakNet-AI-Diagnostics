@@ -1,4 +1,4 @@
-"""Deterministic, explicitly simulated provider for AI V2.1."""
+"""Deterministic, explicitly simulated provider for AI V2."""
 
 from __future__ import annotations
 
@@ -73,6 +73,7 @@ class FakeLlmProvider:
             structured_payload=payload,
             latency_ms=0,
             finish_status="completed",
+            request_id=request.request_id,
         )
 
     def generate_sync(self, request: LlmRequest) -> LlmProviderResult:

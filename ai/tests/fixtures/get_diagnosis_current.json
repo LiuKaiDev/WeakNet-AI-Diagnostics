@@ -1,0 +1,38 @@
+{
+  "state": "Degraded",
+  "active_incidents": 1,
+  "active_hypotheses": 1,
+  "selected_uplink": "wlan0",
+  "limitations": ["active-probe evidence is freshness-bounded and target-specific"],
+  "incidents": [
+    {
+      "id": 17,
+      "type": "HighTcpRtt",
+      "state": "Active",
+      "scope": "socket netns=1:2 generation=4",
+      "opened_at_ms": 1700000000000,
+      "last_updated_at_ms": 1700000001000,
+      "evidence": [
+        {"source_kind": "TcpInfoObservation", "source": "SocketTracker", "timestamp_ms": 1700000001000}
+      ]
+    }
+  ],
+  "hypotheses": [
+    {
+      "occurrence": 3,
+      "type": "LocalLinkSuspected",
+      "state": "Active",
+      "confidence": "Medium",
+      "scope": "socket netns=1:2 generation=4",
+      "reason": "weak_current_wifi_and_gateway_degradation",
+      "supporting_evidence": [
+        {"role": "Supporting", "kind": "HighTcpRtt", "source": "IncidentEngine", "timestamp_ms": 1700000001000},
+        {"role": "Supporting", "kind": "WifiSignalVeryWeak", "source": "WifiCollector", "timestamp_ms": 1700000001000}
+      ],
+      "contradicting_evidence": [],
+      "missing_evidence": [
+        {"role": "Missing", "kind": "GatewayDeviceHealthUnavailable", "capability": "NotImplemented", "timestamp_ms": 1700000001000}
+      ]
+    }
+  ]
+}

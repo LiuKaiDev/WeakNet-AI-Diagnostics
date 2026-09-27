@@ -51,6 +51,7 @@ env/
 
 .env
 .env.*
+*.local
 
 # Editor / system files
 
