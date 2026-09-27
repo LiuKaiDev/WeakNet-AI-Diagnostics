@@ -80,9 +80,22 @@ notifications and a broader wireless framework are future work.
 RSSI is radio signal evidence, not network health. Low RSSI does not prove
 interference, a local-link fault, or packet loss. A retry counter is a kernel
 station statistic, not a packet-loss percentage. Not associated is not an
-Internet outage without later topology/context correlation. RootCauseEngine
-does not consume these fields in this stage; a later additive stage may use
-them conservatively without changing these meanings.
+Internet outage without later topology/context correlation. The deterministic
+RootCauseEngine enrichment consumes only fresh, current-interface observations:
+association failure can support `LocalLinkSuspected` when a path incident is
+active; weak/very-weak RSSI is contextual and requires degraded gateway
+evidence; associated/normal Wi-Fi can strengthen the relative beyond-gateway
+interpretation. Unsupported, permission, transport, error, stale, mismatched,
+and missing telemetry remain missing evidence.
+
+The engine keeps one bounded observation per `NetnsId + ifindex`, uses a named
+ten-second monotonic freshness window, and never correlates by interface name.
+Signal categories use `<= -70 dBm` (weak) and `<= -80 dBm` (very weak), with
+`-67`/`-77 dBm` recovery hysteresis. These thresholds are heuristics. The
+optional low-TX-bitrate context uses a reviewable 6,000-kbps default and is not
+a failure threshold. The enrichment never derives retry intervals from
+cumulative counters and does not claim AP health, RF interference, roaming
+history, or endpoint-specific loss.
 
 The collector operates only in the daemon's current network namespace, like
 the existing Phase 4 topology collector. It does not scan, discover APs,

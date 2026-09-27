@@ -40,6 +40,15 @@ const char* rootCauseEvidenceKindName(RootCauseEvidenceKind kind) noexcept {
             return "SocketEndpointSpecificProbeUnavailable";
         case RootCauseEvidenceKind::HopLevelEvidenceUnavailable: return "HopLevelEvidenceUnavailable";
         case RootCauseEvidenceKind::GatewayDeviceHealthUnavailable: return "GatewayDeviceHealthUnavailable";
+        case RootCauseEvidenceKind::WifiAssociated: return "WifiAssociated";
+        case RootCauseEvidenceKind::WifiNotAssociated: return "WifiNotAssociated";
+        case RootCauseEvidenceKind::WifiSignalNormal: return "WifiSignalNormal";
+        case RootCauseEvidenceKind::WifiSignalWeak: return "WifiSignalWeak";
+        case RootCauseEvidenceKind::WifiSignalVeryWeak: return "WifiSignalVeryWeak";
+        case RootCauseEvidenceKind::WifiTxBitrateLow: return "WifiTxBitrateLow";
+        case RootCauseEvidenceKind::WifiEvidenceUnavailable: return "WifiEvidenceUnavailable";
+        case RootCauseEvidenceKind::WifiEvidenceStale: return "WifiEvidenceStale";
+        case RootCauseEvidenceKind::WifiInterfaceMismatch: return "WifiInterfaceMismatch";
     }
     return "Unknown";
 }

@@ -84,7 +84,8 @@ std::array<std::uint8_t, 16> address(const char* literal) {
 }
 
 NetworkEvent routeEvent(SocketId socket, const char* gateway, std::uint64_t generation,
-                        MonotonicTime at) {
+                        MonotonicTime at,
+                        InterfaceId selected = InterfaceId{3, "eth-test"}) {
     SocketRouteContextObservation context;
     context.socket_id = socket;
     context.netns = socket.netns;
@@ -94,7 +95,7 @@ NetworkEvent routeEvent(SocketId socket, const char* gateway, std::uint64_t gene
     route.table = RT_TABLE_MAIN;
     route.gateway = address(gateway);
     context.route = route;
-    context.selected_interface = InterfaceId{3, "eth-test"};
+    context.selected_interface = selected;
     context.possible_interfaces.push_back(*context.selected_interface);
     context.uplink_relationship = SelectedUplinkRelationship::MatchesSelectedUplink;
     context.attribution_status = RouteAttributionStatus::Available;
@@ -107,18 +108,20 @@ NetworkEvent routeEvent(SocketId socket, const char* gateway, std::uint64_t gene
         context);
 }
 
-NetworkEvent uplinkEvent(NetnsId netns, MonotonicTime at) {
-    UplinkObservation uplink{"eth-test", 1, true, "test selected uplink"};
+NetworkEvent uplinkEvent(NetnsId netns, MonotonicTime at,
+                         InterfaceId selected = InterfaceId{3, "eth-test"}) {
+    UplinkObservation uplink{selected.observed_name, 1, true, "test selected uplink"};
     return NetworkEvent(NetworkEventHeader{kNetworkEventSchemaVersion,
         EventId{next_event_id++}, {}, EventKind::UplinkObservation,
         EventSource::NetlinkCollector, RealtimeTime(at.time_since_epoch()), at,
-        netns, InterfaceId{3, "eth-test"}, std::nullopt, Validity::Valid, std::nullopt},
+        netns, selected, std::nullopt, Validity::Valid, std::nullopt},
         uplink);
 }
 
 NetworkEvent probeEvent(NetnsId netns, ProbeTargetKind kind, ProbeStatus status,
                         std::optional<std::uint64_t> rtt, const char* target,
-                        std::uint64_t generation, MonotonicTime at) {
+                        std::uint64_t generation, MonotonicTime at,
+                        InterfaceId selected = InterfaceId{3, "eth-test"}) {
     ProbeObservation probe;
     probe.target.kind = kind;
     probe.target.netns = netns;
@@ -126,7 +129,7 @@ NetworkEvent probeEvent(NetnsId netns, ProbeTargetKind kind, ProbeStatus status,
     probe.target.address = address(target);
     probe.target.generation = generation;
     if (kind == ProbeTargetKind::Gateway)
-        probe.target.interface = InterfaceId{3, "eth-test"};
+        probe.target.interface = selected;
     probe.netns = netns;
     probe.observed_at = RealtimeTime(at.time_since_epoch());
     probe.monotonic_at = at;
@@ -140,6 +143,28 @@ NetworkEvent probeEvent(NetnsId netns, ProbeTargetKind kind, ProbeStatus status,
         EventId{next_event_id++}, {}, EventKind::ProbeObservation,
         EventSource::ActiveProbe, probe.observed_at, at, netns,
         probe.target.interface, std::nullopt, probe.validity, std::nullopt}, probe);
+}
+
+NetworkEvent wifiEvent(NetnsId netns, InterfaceId interface,
+                       WifiCapability capability, WifiLinkState link_state,
+                       std::optional<std::int32_t> signal, std::uint64_t generation,
+                       MonotonicTime at, Validity validity = Validity::Valid) {
+    WifiObservation wifi;
+    wifi.netns = netns;
+    wifi.interface = interface;
+    wifi.interface_generation = generation;
+    wifi.capability = capability;
+    wifi.link_state = link_state;
+    wifi.signal_dbm = signal;
+    wifi.observed_at = RealtimeTime(at.time_since_epoch());
+    wifi.monotonic_at = at;
+    wifi.source = EventSource::WifiCollector;
+    wifi.validity = validity;
+    wifi.status = "test";
+    return NetworkEvent(NetworkEventHeader{kNetworkEventSchemaVersion,
+        EventId{next_event_id++}, {}, EventKind::WifiObservation,
+        EventSource::WifiCollector, wifi.observed_at, at, netns, interface,
+        std::nullopt, validity, std::nullopt}, wifi);
 }
 
 const RootCauseHypothesisObservation* findHypothesis(
@@ -358,6 +383,66 @@ int main() {
                                   std::nullopt, "192.0.2.1", 1, clock.monotonicNow()));
         ok &= expect(engine.listActiveHypotheses().empty(),
                      "gateway timeout alone created a root-cause hypothesis");
+    }
+
+    // Wi-Fi enriches only a current, fresh path context. RSSI categories use
+    // hysteresis, association failure is authoritative only for the selected
+    // Wi-Fi interface, and stale/old-interface samples stop contributing.
+    {
+        ManualClock clock;
+        EventBus bus;
+        RootCauseEngine engine(bus, clock);
+        const InterfaceId wifi{3, "wlan-test"};
+        engine.process(routeEvent(kSocket, "192.0.2.1", 1, clock.monotonicNow(), wifi));
+        engine.process(uplinkEvent(kNetns, clock.monotonicNow(), wifi));
+        engine.process(incidentEvent(incident(IncidentId{40}, IncidentType::HighTcpRtt,
+                                              IncidentScope{kSocket}, clock.monotonicNow())));
+        engine.process(wifiEvent(kNetns, wifi, WifiCapability::Available,
+                                 WifiLinkState::Associated, -75, 1,
+                                 clock.monotonicNow()));
+        clock.advance(std::chrono::seconds(1));
+        engine.process(probeEvent(kNetns, ProbeTargetKind::Gateway, ProbeStatus::Timeout,
+                                  std::nullopt, "192.0.2.1", 1, clock.monotonicNow(), wifi));
+        auto active = engine.listActiveHypotheses();
+        auto* local = findHypothesis(active, RootCauseType::LocalLinkSuspected);
+        ok &= expect(local && local->confidence == HypothesisConfidence::Low &&
+                     hasEvidence(*local, RootCauseEvidenceRole::Supporting,
+                                 RootCauseEvidenceKind::WifiSignalWeak),
+                     "weak current Wi-Fi plus gateway degradation did not open local-link context");
+        const auto local_id = local ? local->id : RootCauseHypothesisId{};
+
+        clock.advance(std::chrono::seconds(1));
+        engine.process(wifiEvent(kNetns, wifi, WifiCapability::Available,
+                                 WifiLinkState::Associated, -74, 1,
+                                 clock.monotonicNow()));
+        active = engine.listActiveHypotheses();
+        local = findHypothesis(active, RootCauseType::LocalLinkSuspected);
+        ok &= expect(local && local->id == local_id,
+                     "same Wi-Fi signal category reopened local-link hypothesis");
+
+        clock.advance(std::chrono::seconds(1));
+        engine.process(wifiEvent(kNetns, wifi, WifiCapability::NotAssociated,
+                                 WifiLinkState::NotAssociated, std::nullopt, 1,
+                                 clock.monotonicNow()));
+        active = engine.listActiveHypotheses();
+        local = findHypothesis(active, RootCauseType::LocalLinkSuspected);
+        ok &= expect(local && local->confidence == HypothesisConfidence::Medium &&
+                     hasEvidence(*local, RootCauseEvidenceRole::Supporting,
+                                 RootCauseEvidenceKind::WifiNotAssociated),
+                     "authoritative current Wi-Fi association failure was not medium local-link evidence");
+
+        clock.advance(std::chrono::seconds(11));
+        engine.process(uplinkEvent(kNetns, clock.monotonicNow(), wifi));
+        ok &= expect(!findHypothesis(engine.listActiveHypotheses(),
+                                     RootCauseType::LocalLinkSuspected),
+                     "stale Wi-Fi evidence continued supporting local-link suspicion");
+
+        const InterfaceId ethernet{4, "eth-new"};
+        engine.process(routeEvent(kSocket, "192.0.2.1", 2, clock.monotonicNow(), ethernet));
+        engine.process(uplinkEvent(kNetns, clock.monotonicNow(), ethernet));
+        ok &= expect(!findHypothesis(engine.listActiveHypotheses(),
+                                     RootCauseType::LocalLinkSuspected),
+                     "old Wi-Fi interface evidence leaked after uplink switch");
     }
 
     // EventBus delivery recomputes immediately, while timestamp/sequence-only

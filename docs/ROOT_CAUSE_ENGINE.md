@@ -12,9 +12,11 @@ the network, or invokes AI.
 
 The catalog remains `UplinkAvailabilityProblem`, `LocalRoutingProblem`,
 `NetworkPathDegradation`, `RemoteOrUpstreamDegradation`,
-`LocalLinkSuspected`, and `InsufficientEvidence`. `LocalLinkSuspected` remains
-deferred: gateway delay or timeout cannot distinguish a local link, gateway
-device, local routing, or ICMP filtering problem.
+`LocalLinkSuspected`, and `InsufficientEvidence`. `LocalLinkSuspected` is a
+conservative Wi-Fi enrichment: it opens only when active path degradation is
+correlated with a fresh current-interface association failure, or weak signal
+plus degraded gateway evidence. It is capped at Medium confidence; gateway
+delay, RSSI, and a single timeout do not prove a Wi-Fi fault.
 
 An incident is a detected condition, not a root cause. A hypothesis contains
 typed supporting, contradicting, and missing evidence. Missing capability or
@@ -120,6 +122,47 @@ resolution gets a new occurrence ID. Probe observations trigger scoped bounded
 recomputation immediately. Evidence timestamp or probe-sequence changes do not
 publish duplicate hypothesis events when confidence, roles, kinds, values,
 capability, and meaning are unchanged.
+
+## Wi-Fi enrichment
+
+The engine retains only the latest `WifiObservation` per `NetnsId + ifindex`.
+Interface names are display metadata and are never used for correlation. A
+sample is usable only when it is fresh under the named ten-second monotonic
+`wifi_freshness` window, matches the current route/uplink interface (and its
+generation when both are present), and reports an applicable station state.
+Switching uplinks or receiving a no-target observation prevents old interface
+evidence from leaking into the new diagnosis. Namespaces are isolated.
+
+`Available + Associated` contributes association, signal, and optional low
+TX-bitrate context. `NotAssociated` is meaningful only for the authoritative
+current Wi-Fi uplink. `NotWifi`, `Unsupported`, `PermissionDenied`,
+`TransportUnavailable`, `Error`, and `NoTarget` are missing/not-applicable
+evidence, never link failures. Stale and generation-mismatched samples are
+missing evidence. Cumulative retry/failure counters are not converted to
+interval ratios or packet loss here.
+
+Signal categories use average signal when available, otherwise signal: weak
+enters at `<= -70 dBm` and very weak at `<= -80 dBm`; they leave at `>= -67`
+and `>= -77 dBm`. These are reviewable heuristics with small hysteresis, not
+universal radio limits. RSSI alone never opens a hypothesis. Healthy Wi-Fi
+means only fresh association plus a non-weak signal; it does not prove the
+gateway or local network healthy.
+TX bitrate below the named `wifi_tx_bitrate_low_kbps` default of 6,000 kbps is
+only weak context; PHY and driver reporting make it unsuitable as a failure
+threshold.
+
+The local-link rule is deterministic and capped at Medium: active TCP/path
+degradation plus authoritative current `NotAssociated` opens Medium; active
+degradation plus weak signal and gateway high RTT/timeout opens Low, or Medium
+when very-weak signal or another independent path incident is present. Weak
+signal without degradation, or with a healthy gateway, does not open it.
+Route/uplink authority is preserved. Healthy associated/normal Wi-Fi enriches
+the existing beyond-gateway pattern, while association failure or very weak
+signal prevents that pattern from being over-claimed. Missing Wi-Fi does not
+contradict a remote diagnosis and does not resolve hypotheses by itself.
+
+AP/device health, RF interference, roaming history, retry interval metrics, and
+endpoint-specific validation remain unobserved.
 
 ## Non-goals
 

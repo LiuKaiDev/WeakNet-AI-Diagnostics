@@ -271,8 +271,9 @@ Tests:
 The first Wi-Fi evidence slice is implemented: `WifiCollector` uses native
 Generic Netlink/nl80211 with typed optional fields, signed RSSI parsing,
 exact-kbps bitrate conversion, bounded polling, selected-interface identity,
-and degraded capability states. It is additive to the V1 RSSI path. It does
-not add Wi-Fi incidents or RootCauseEngine rules; see `docs/WIFI_EVIDENCE.md`.
+and degraded capability states. It is additive to the V1 RSSI path. The
+RootCauseEngine now consumes this typed evidence conservatively; no Wi-Fi
+incidents are added. See `docs/WIFI_EVIDENCE.md`.
 
 Objective: migrate active probing and Wi-Fi facts, then expose a trustworthy deterministic health view.
 
@@ -343,12 +344,14 @@ Tests:
 
 ## Phase 9: RootCauseEngine
 
-Status: the bounded deterministic stage now consumes IncidentEngine,
-route/uplink context, and the latest fresh target-matched ActiveProbe evidence.
-It distinguishes gateway-side path evidence from a conservative
-beyond-the-gateway pattern without claiming ISP or remote-server failure.
-Wi-Fi, collector-health correlation, hop/endpoint-specific probes, and replay
-tooling remain future work.
+Status: the bounded deterministic stage consumes IncidentEngine, route/uplink
+context, and the latest fresh target-matched ActiveProbe and Wi-Fi evidence. It
+distinguishes gateway-side path evidence from conservative local-link and
+beyond-the-gateway patterns without claiming ISP or remote-server failure.
+Wi-Fi cache identity, freshness, association semantics, RSSI hysteresis, and
+the capped `LocalLinkSuspected` rule are implemented. Collector-health
+correlation, hop/endpoint-specific probes, and replay tooling remain future
+work.
 
 Objective: produce explainable evidence-backed cause candidates entirely in C++.
 

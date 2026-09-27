@@ -21,8 +21,17 @@ struct RootCausePolicy {
     std::size_t max_evidence_per_hypothesis{8};
     std::size_t max_active_hypotheses{1024};
     std::chrono::seconds probe_freshness{15};
+    // WifiCollector's documented polling/freshness contract is ten seconds.
+    std::chrono::seconds wifi_freshness{10};
     std::uint64_t gateway_rtt_high_us{75'000};
     std::uint64_t remote_rtt_high_us{175'000};
+    // RSSI values are engineering heuristics, not universal radio limits.
+    std::int32_t wifi_signal_weak_dbm{-70};
+    std::int32_t wifi_signal_very_weak_dbm{-80};
+    // Hysteresis prevents a one-dBm oscillation from changing evidence.
+    std::int32_t wifi_signal_weak_recover_dbm{-67};
+    std::int32_t wifi_signal_very_weak_recover_dbm{-77};
+    std::uint32_t wifi_tx_bitrate_low_kbps{6'000};
 };
 
 class RootCauseEngine {
@@ -67,6 +76,19 @@ private:
         std::optional<NetworkEvent> remote;
     };
 
+    enum class WifiSignalCategory : std::uint8_t { None, Normal, Weak, VeryWeak };
+
+    struct WifiCacheKey {
+        NetnsId netns;
+        InterfaceId interface;
+        auto operator<=>(const WifiCacheKey&) const = default;
+    };
+
+    struct WifiCacheEntry {
+        NetworkEvent event;
+        WifiSignalCategory signal_category{WifiSignalCategory::None};
+    };
+
     using IncidentMap = std::map<IncidentId, IncidentObservation>;
 
     static bool sameContent(const RootCauseHypothesisObservation& left,
@@ -109,6 +131,7 @@ private:
     std::map<SocketId, NetworkEvent> route_events_;
     std::map<NetnsId, NetworkEvent> uplink_events_;
     std::map<NetnsId, ProbeCache> probe_events_;
+    std::map<WifiCacheKey, WifiCacheEntry> wifi_events_;
     std::map<CandidateKey, RootCauseHypothesisObservation> active_;
     std::deque<RootCauseHypothesisObservation> resolved_;
     std::uint64_t next_occurrence_{1};

@@ -26,7 +26,8 @@ Methods are read-only and have no input arguments:
 
 Dictionary values use D-Bus variants. Root-cause evidence kinds are serialized
 as stable descriptive names such as `GatewayProbeReachable`,
-`RemoteProbeTimeout`, and `ProbeEvidenceStale`; other enum fields remain names
+`RemoteProbeTimeout`, `ProbeEvidenceStale`, `WifiAssociated`,
+`WifiSignalWeak`, and `WifiNotAssociated`; other enum fields remain names
 or documented numeric values. Internal C++ variant layouts and kernel structs
 are not part of the ABI. Timestamps are realtime Unix milliseconds. Socket and
 namespace scopes include namespace identity and socket generation; interface
@@ -74,8 +75,9 @@ exit 0 even when entries exist. Daemon/D-Bus/usage errors exit 3 or higher.
 `diagnose` prints status, active incidents, and active hypotheses using only
 deterministic structured fields; it does not generate LLM prose.
 Probe-derived supporting, contradicting, and missing evidence appears through
-the existing hypothesis evidence fields and summaries; there is no diagnosis
-logic or separate probe command in the CLI.
+the existing hypothesis evidence fields and summaries, including the Wi-Fi
+cache's interface/freshness limitations; there is no diagnosis logic or
+separate probe/Wi-Fi command in the CLI.
 
 There are no write, configuration, remediation, acknowledgement, or daemon
 control commands. JSON output is deferred because the current codebase has no

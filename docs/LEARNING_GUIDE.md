@@ -275,8 +275,10 @@ Use three contrasting fixtures:
 - insufficient collector visibility.
 
 Then follow `ProbeObservation` through the engine's bounded per-namespace
-cache. Check the 15-second monotonic freshness policy, gateway target matching,
-remote target replacement, and the distinction between `Timeout` and
+cache and `WifiObservation` through its bounded per-interface cache. Check the
+15-second probe and ten-second Wi-Fi monotonic freshness policies, gateway
+target/interface matching, remote target replacement, current Wi-Fi interface
+identity, RSSI hysteresis, and the distinction between `Timeout` and
 `TransportUnavailable`. Compare these combinations:
 
 - TCP degradation plus normal gateway and degraded configured remote;
@@ -284,7 +286,12 @@ remote target replacement, and the distinction between `Timeout` and
 - TCP degradation plus normal gateway and normal configured remote.
 
 The configured remote is path context, not the socket endpoint. Confirm that
-no timeout ratio is calculated and that `LocalLinkSuspected` remains deferred.
+no timeout ratio or retry percentage is calculated. A fresh authoritative
+Wi-Fi `NotAssociated` observation can refine active path degradation into a
+Medium-capped `LocalLinkSuspected`; weak RSSI requires gateway degradation and
+never opens a hypothesis alone. Associated/normal Wi-Fi can strengthen the
+relative beyond-gateway interpretation, while missing or stale Wi-Fi remains
+missing evidence.
 
 You should be able to reproduce every result from the rule version and cited event/sample IDs without consulting an LLM.
 

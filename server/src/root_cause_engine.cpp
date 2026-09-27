@@ -1,6 +1,7 @@
 #include "root_cause_engine.hpp"
 
 #include <algorithm>
+#include <linux/nl80211.h>
 #include <stdexcept>
 #include <type_traits>
 #include <utility>
@@ -57,8 +58,16 @@ RootCauseEngine::RootCauseEngine(EventBus& bus, const Clock& clock,
     if (policy_.max_recent_resolved == 0 || policy_.max_evidence_per_hypothesis == 0 ||
         policy_.max_active_hypotheses == 0 ||
         policy_.probe_freshness <= std::chrono::seconds::zero() ||
+        policy_.wifi_freshness <= std::chrono::seconds::zero() ||
         policy_.gateway_rtt_high_us == 0 || policy_.remote_rtt_high_us == 0) {
         throw std::invalid_argument("RootCausePolicy requires positive bounds");
+    }
+    if (policy_.wifi_signal_very_weak_dbm >= policy_.wifi_signal_weak_dbm ||
+        policy_.wifi_signal_weak_recover_dbm <= policy_.wifi_signal_weak_dbm ||
+        policy_.wifi_signal_very_weak_recover_dbm <= policy_.wifi_signal_very_weak_dbm ||
+        policy_.wifi_signal_weak_recover_dbm <= policy_.wifi_signal_very_weak_recover_dbm ||
+        policy_.wifi_tx_bitrate_low_kbps == 0) {
+        throw std::invalid_argument("RootCausePolicy has invalid Wi-Fi thresholds");
     }
 }
 
@@ -324,6 +333,164 @@ RootCauseEngine::buildCandidatesLocked() const {
         return fact;
     };
 
+    enum class WifiMeaning : std::uint8_t {
+        Missing,
+        Stale,
+        Mismatch,
+        NotApplicable,
+        Associated,
+        NotAssociated,
+    };
+    struct WifiFact {
+        const WifiCacheEntry* entry{};
+        WifiMeaning meaning{WifiMeaning::Missing};
+        std::string provenance;
+    };
+
+    // The selected interface is deliberately derived from typed route/uplink
+    // identity, never from the display name carried by UplinkObservation.
+    auto currentInterface = [&](NetnsId netns,
+                                const SocketRouteContextObservation* route)
+        -> std::optional<InterfaceId> {
+        if (route) {
+            if (route->attribution_status != RouteAttributionStatus::Available ||
+                !route->topology_authoritative || !route->selected_interface)
+                return std::nullopt;
+            return route->selected_interface;
+        }
+        const auto uplink = uplink_events_.find(netns);
+        if (uplink == uplink_events_.end() ||
+            !usableValidity(uplink->second.header().validity)) return std::nullopt;
+        const auto& value = std::get<UplinkObservation>(uplink->second.payload());
+        if (!value.selected || !uplink->second.header().interface) return std::nullopt;
+        return uplink->second.header().interface;
+    };
+
+    auto classifyWifi = [&](NetnsId netns,
+                            const SocketRouteContextObservation* route) {
+        WifiFact fact;
+        const auto selected = currentInterface(netns, route);
+        if (!selected) {
+            fact.provenance = route
+                ? "socket route does not provide an authoritative selected interface"
+                : "selected uplink interface is unavailable";
+            return fact;
+        }
+        const auto key = WifiCacheKey{netns, *selected};
+        const auto cached = wifi_events_.find(key);
+        if (cached == wifi_events_.end()) {
+            fact.provenance = "no current-interface Wi-Fi observation available";
+            return fact;
+        }
+        fact.entry = &cached->second;
+        const auto& event = cached->second.event;
+        const auto& observation = std::get<WifiObservation>(event.payload());
+        const auto now = clock_.monotonicNow();
+        if (observation.monotonic_at > now ||
+            now - observation.monotonic_at > policy_.wifi_freshness) {
+            fact.meaning = WifiMeaning::Stale;
+            fact.provenance = "Wi-Fi observation is older than the freshness window";
+            return fact;
+        }
+        const std::uint64_t route_generation = route ? route->topology_generation : 0;
+        if (route_generation != 0 && observation.interface_generation != 0 &&
+            route_generation != observation.interface_generation) {
+            fact.meaning = WifiMeaning::Mismatch;
+            fact.provenance = "Wi-Fi observation belongs to an older interface generation";
+            return fact;
+        }
+        if (!usableValidity(observation.validity)) {
+            fact.provenance = "Wi-Fi observation has unusable validity";
+            return fact;
+        }
+        if (observation.nl80211_iftype &&
+            *observation.nl80211_iftype != NL80211_IFTYPE_STATION) {
+            fact.meaning = WifiMeaning::NotApplicable;
+            fact.provenance = "current interface is not an nl80211 station interface";
+            return fact;
+        }
+        switch (observation.capability) {
+            case WifiCapability::NotWifi:
+                fact.meaning = WifiMeaning::NotApplicable;
+                fact.provenance = "selected interface is not Wi-Fi";
+                return fact;
+            case WifiCapability::Available:
+                if (observation.link_state == WifiLinkState::Associated) {
+                    fact.meaning = WifiMeaning::Associated;
+                    fact.provenance = "fresh associated Wi-Fi observation";
+                } else {
+                    fact.provenance = "available Wi-Fi observation lacks authoritative association";
+                }
+                return fact;
+            case WifiCapability::NotAssociated:
+                if (observation.link_state == WifiLinkState::NotAssociated ||
+                    observation.link_state == WifiLinkState::Unknown) {
+                    fact.meaning = WifiMeaning::NotAssociated;
+                    fact.provenance = "fresh authoritative Wi-Fi association failure";
+                } else {
+                    fact.provenance = "Wi-Fi capability state is not authoritative association failure";
+                }
+                return fact;
+            case WifiCapability::Unsupported:
+            case WifiCapability::PermissionDenied:
+            case WifiCapability::TransportUnavailable:
+            case WifiCapability::Error:
+            case WifiCapability::NoTarget:
+                fact.provenance = "Wi-Fi capability is unavailable; no link conclusion is made";
+                return fact;
+        }
+        return fact;
+    };
+
+    auto wifiEvidence = [&](const WifiCacheEntry& entry, RootCauseScope scope,
+                            RootCauseEvidenceRole role, RootCauseEvidenceKind kind,
+                            std::string provenance) {
+        auto evidence = observationEvidence(entry.event, std::move(scope), role, kind,
+                                            RootCauseEvidenceCapability::Available,
+                                            std::move(provenance));
+        // Keep evidence semantic: the category is material, the raw gauge is
+        // not. This prevents every polling sample inside one category from
+        // publishing a duplicate hypothesis update.
+        return evidence;
+    };
+
+    auto addWifiUnavailable = [&](RootCauseHypothesisObservation& hypothesis,
+                                  RootCauseScope scope, const WifiFact& fact) {
+        const auto scopeNetns = std::visit([](const auto& value) -> NetnsId {
+            using T = std::decay_t<decltype(value)>;
+            if constexpr (std::is_same_v<T, SocketId>) return value.netns;
+            if constexpr (std::is_same_v<T, NetnsId>) return value;
+            return NetnsId{};
+        }, scope);
+        WifiObservation fallbackObservation;
+        fallbackObservation.netns = scopeNetns;
+        fallbackObservation.source = EventSource::WifiCollector;
+        const auto fallback = NetworkEvent(NetworkEventHeader{
+                kNetworkEventSchemaVersion, EventId{1}, {}, EventKind::WifiObservation,
+                EventSource::WifiCollector, {}, {},
+                scopeNetns, std::nullopt, std::nullopt, Validity::Unavailable, std::nullopt},
+                fallbackObservation);
+        if (fact.entry) {
+            const auto kind = fact.meaning == WifiMeaning::Stale
+                ? RootCauseEvidenceKind::WifiEvidenceStale
+                : fact.meaning == WifiMeaning::Mismatch
+                    ? RootCauseEvidenceKind::WifiInterfaceMismatch
+                    : RootCauseEvidenceKind::WifiEvidenceUnavailable;
+            auto evidence = wifiEvidence(*fact.entry, std::move(scope),
+                                         RootCauseEvidenceRole::Missing, kind,
+                                         fact.provenance);
+            evidence.capability = RootCauseEvidenceCapability::Unavailable;
+            addEvidence(hypothesis.missing_evidence, std::move(evidence));
+        } else {
+            auto evidence = observationEvidence(fallback, std::move(scope),
+                RootCauseEvidenceRole::Missing,
+                RootCauseEvidenceKind::WifiEvidenceUnavailable,
+                RootCauseEvidenceCapability::Unavailable,
+                fact.provenance);
+            addEvidence(hypothesis.missing_evidence, std::move(evidence));
+        }
+    };
+
     for (const auto& [id, incident] : active_incidents_) {
         (void)id;
         const auto scope = incidentScope(incident);
@@ -548,6 +715,57 @@ RootCauseEngine::buildCandidatesLocked() const {
         addProbeFact(gateway_probe, ProbeTargetKind::Gateway);
         addProbeFact(remote_probe, ProbeTargetKind::Remote);
 
+        const auto wifi = classifyWifi(socket->netns, route_context);
+        if (wifi.entry &&
+            (wifi.meaning == WifiMeaning::Associated ||
+             wifi.meaning == WifiMeaning::NotAssociated)) {
+            const auto& wifi_observation = std::get<WifiObservation>(wifi.entry->event.payload());
+            addEvidence(candidate.observation.supporting_evidence,
+                        wifiEvidence(*wifi.entry, key.scope,
+                                     RootCauseEvidenceRole::Supporting,
+                                     wifi.meaning == WifiMeaning::Associated
+                                         ? RootCauseEvidenceKind::WifiAssociated
+                                         : RootCauseEvidenceKind::WifiNotAssociated,
+                                     wifi.provenance));
+            if (wifi.meaning == WifiMeaning::Associated) {
+                switch (wifi.entry->signal_category) {
+                    case WifiSignalCategory::Normal:
+                        addEvidence(candidate.observation.supporting_evidence,
+                                    wifiEvidence(*wifi.entry, key.scope,
+                                                 RootCauseEvidenceRole::Supporting,
+                                                 RootCauseEvidenceKind::WifiSignalNormal,
+                                                 "fresh Wi-Fi signal is outside weak-signal heuristic"));
+                        break;
+                    case WifiSignalCategory::Weak:
+                        addEvidence(candidate.observation.supporting_evidence,
+                                    wifiEvidence(*wifi.entry, key.scope,
+                                                 RootCauseEvidenceRole::Supporting,
+                                                 RootCauseEvidenceKind::WifiSignalWeak,
+                                                 "fresh Wi-Fi signal is weak contextual evidence"));
+                        break;
+                    case WifiSignalCategory::VeryWeak:
+                        addEvidence(candidate.observation.supporting_evidence,
+                                    wifiEvidence(*wifi.entry, key.scope,
+                                                 RootCauseEvidenceRole::Supporting,
+                                                 RootCauseEvidenceKind::WifiSignalVeryWeak,
+                                                 "fresh Wi-Fi signal is very weak contextual evidence"));
+                        break;
+                    case WifiSignalCategory::None:
+                        break;
+                }
+                if (wifi_observation.tx_bitrate_kbps &&
+                    *wifi_observation.tx_bitrate_kbps < policy_.wifi_tx_bitrate_low_kbps) {
+                    addEvidence(candidate.observation.supporting_evidence,
+                                wifiEvidence(*wifi.entry, key.scope,
+                                             RootCauseEvidenceRole::Supporting,
+                                             RootCauseEvidenceKind::WifiTxBitrateLow,
+                                             "low TX bitrate is weak contextual evidence"));
+                }
+            }
+        } else {
+            addWifiUnavailable(candidate.observation, key.scope, wifi);
+        }
+
         const bool gateway_healthy = gateway_probe.meaning == ProbeMeaning::Reachable;
         const bool gateway_high = gateway_probe.meaning == ProbeMeaning::HighRtt;
         const bool remote_high = remote_probe.meaning == ProbeMeaning::HighRtt;
@@ -573,11 +791,81 @@ RootCauseEngine::buildCandidatesLocked() const {
                      remote_high && has_rtt_incident && has_retransmission_incident)
                 candidate.observation.confidence = HypothesisConfidence::High;
         }
+
+        // Wi-Fi is a refinement of an already observed path problem. A signal
+        // threshold alone never opens this candidate, and confidence is
+        // intentionally capped at Medium in this stage.
+        const bool wifi_not_associated = wifi.meaning == WifiMeaning::NotAssociated;
+        const bool wifi_weak = wifi.entry && wifi.meaning == WifiMeaning::Associated &&
+            (wifi.entry->signal_category == WifiSignalCategory::Weak ||
+             wifi.entry->signal_category == WifiSignalCategory::VeryWeak);
+        const bool wifi_very_weak = wifi.entry && wifi.meaning == WifiMeaning::Associated &&
+            wifi.entry->signal_category == WifiSignalCategory::VeryWeak;
+        const bool gateway_degraded = gateway_probe.meaning == ProbeMeaning::HighRtt ||
+                                      gateway_probe.meaning == ProbeMeaning::Timeout;
+        if (wifi_not_associated || (wifi_weak && gateway_degraded)) {
+            Candidate local_candidate;
+            auto& local = local_candidate.observation;
+            local.type = RootCauseType::LocalLinkSuspected;
+            local.scope = key.scope;
+            local.opened_at = candidate.observation.opened_at;
+            local.last_updated_at = candidate.observation.last_updated_at;
+            local.reason_code = wifi_not_associated
+                ? "current_wifi_not_associated_during_path_degradation"
+                : "weak_current_wifi_and_gateway_degradation";
+            local.confidence = wifi_not_associated || wifi_very_weak ||
+                static_cast<unsigned>(candidate.observation.confidence) >=
+                    static_cast<unsigned>(HypothesisConfidence::Medium)
+                ? HypothesisConfidence::Medium : HypothesisConfidence::Low;
+            for (const auto& evidence : candidate.observation.supporting_evidence) {
+                if (evidence.kind == RootCauseEvidenceKind::HighTcpRtt ||
+                    evidence.kind == RootCauseEvidenceKind::ElevatedTcpRetransmission)
+                    addEvidence(local.supporting_evidence, evidence);
+            }
+            if (wifi.entry) {
+                addEvidence(local.supporting_evidence,
+                            wifiEvidence(*wifi.entry, key.scope,
+                                RootCauseEvidenceRole::Supporting,
+                                wifi_not_associated ? RootCauseEvidenceKind::WifiNotAssociated
+                                                    : wifi_very_weak
+                                                        ? RootCauseEvidenceKind::WifiSignalVeryWeak
+                                                        : RootCauseEvidenceKind::WifiSignalWeak,
+                                wifi.provenance));
+                if (!wifi_not_associated) {
+                    addEvidence(local.supporting_evidence,
+                                wifiEvidence(*wifi.entry, key.scope,
+                                    RootCauseEvidenceRole::Supporting,
+                                    RootCauseEvidenceKind::WifiAssociated,
+                                    "current Wi-Fi association is present"));
+                }
+            }
+            if (gateway_probe.event && gateway_degraded) {
+                addEvidence(local.supporting_evidence,
+                    probeEvidence(*gateway_probe.event, key.scope,
+                        RootCauseEvidenceRole::Supporting,
+                        gateway_probe.meaning == ProbeMeaning::HighRtt
+                            ? RootCauseEvidenceKind::GatewayProbeHighRtt
+                            : RootCauseEvidenceKind::GatewayProbeTimeout,
+                        RootCauseEvidenceCapability::Available,
+                        gateway_probe.provenance));
+            }
+            addEvidence(local.missing_evidence,
+                        observationEvidence(
+                            syntheticProbeEvent(socket->netns, ProbeTargetKind::Gateway),
+                            key.scope, RootCauseEvidenceRole::Missing,
+                            RootCauseEvidenceKind::GatewayDeviceHealthUnavailable,
+                            RootCauseEvidenceCapability::NotImplemented,
+                            "gateway/AP health is not directly observed"));
+            candidates.emplace(CandidateKey{local.type, local.scope},
+                               std::move(local_candidate));
+        }
         const auto usableProbeContext = [](ProbeMeaning meaning) {
             return meaning == ProbeMeaning::Reachable || meaning == ProbeMeaning::HighRtt ||
                    meaning == ProbeMeaning::Timeout;
         };
-        if (route_available && uplink_available &&
+        const bool localWifiContext = (wifi_not_associated ||
+            (wifi_weak && gateway_degraded));
+        if (route_available && uplink_available && !localWifiContext &&
             (!usableProbeContext(gateway_probe.meaning) ||
              !usableProbeContext(remote_probe.meaning))) {
             Candidate insufficient_candidate;
@@ -673,6 +961,28 @@ RootCauseEngine::buildCandidatesLocked() const {
             RootCauseEvidenceKind::HopLevelEvidenceUnavailable,
             RootCauseEvidenceCapability::NotImplemented,
             "hop-level path evidence is not implemented"));
+        const auto wifi = classifyWifi(socket->netns, &route_context);
+        if (wifi.meaning == WifiMeaning::NotAssociated ||
+            (wifi.entry && wifi.meaning == WifiMeaning::Associated &&
+             wifi.entry->signal_category == WifiSignalCategory::VeryWeak)) {
+            // Current association failure or very weak signal is local-link
+            // context; do not over-claim a remote/upstream location.
+            continue;
+        }
+        if (wifi.entry && wifi.meaning == WifiMeaning::Associated) {
+            addEvidence(hypothesis.supporting_evidence,
+                        wifiEvidence(*wifi.entry, key.scope,
+                            RootCauseEvidenceRole::Supporting,
+                            RootCauseEvidenceKind::WifiAssociated,
+                            "current Wi-Fi association supports a beyond-gateway interpretation"));
+            if (wifi.entry->signal_category == WifiSignalCategory::Normal) {
+                addEvidence(hypothesis.supporting_evidence,
+                            wifiEvidence(*wifi.entry, key.scope,
+                                RootCauseEvidenceRole::Supporting,
+                                RootCauseEvidenceKind::WifiSignalNormal,
+                                "current Wi-Fi signal is outside weak-signal heuristic"));
+            }
+        }
         remote.push_back(std::move(remote_candidate));
     }
     for (auto& candidate : remote) {
@@ -802,6 +1112,61 @@ bool RootCauseEngine::process(const NetworkEvent& event) {
                 current = event;
                 while (probe_events_.size() > policy_.max_active_hypotheses)
                     probe_events_.erase(probe_events_.begin());
+                reconcileLocked(event.header().observed_at, emissions);
+                break;
+            }
+            case EventKind::WifiObservation: {
+                if (event.header().source != EventSource::WifiCollector) break;
+                const auto& observation = std::get<WifiObservation>(event.payload());
+                consumed = true;
+                if (!observation.interface) {
+                    // A no-target observation is authoritative for clearing
+                    // stale entries in this namespace, but is not a link fault.
+                    for (auto iterator = wifi_events_.begin(); iterator != wifi_events_.end();) {
+                        if (iterator->first.netns == observation.netns)
+                            iterator = wifi_events_.erase(iterator);
+                        else
+                            ++iterator;
+                    }
+                    reconcileLocked(event.header().observed_at, emissions);
+                    break;
+                }
+                const WifiCacheKey key{observation.netns, *observation.interface};
+                const auto current = wifi_events_.find(key);
+                if (current != wifi_events_.end()) {
+                    const auto& previous = std::get<WifiObservation>(current->second.event.payload());
+                    if (observation.monotonic_at < previous.monotonic_at ||
+                        (observation.monotonic_at == previous.monotonic_at &&
+                         event.header().event_id <= current->second.event.header().event_id))
+                        break;
+                }
+                WifiSignalCategory category = WifiSignalCategory::None;
+                const auto signal = observation.signal_avg_dbm
+                    ? observation.signal_avg_dbm : observation.signal_dbm;
+                if (signal && observation.capability == WifiCapability::Available &&
+                    observation.link_state == WifiLinkState::Associated) {
+                    const auto previous = current == wifi_events_.end()
+                        ? WifiSignalCategory::None : current->second.signal_category;
+                    if (previous == WifiSignalCategory::VeryWeak) {
+                        category = *signal >= policy_.wifi_signal_very_weak_recover_dbm
+                            ? (*signal <= policy_.wifi_signal_weak_dbm
+                                ? WifiSignalCategory::Weak : WifiSignalCategory::Normal)
+                            : WifiSignalCategory::VeryWeak;
+                    } else if (previous == WifiSignalCategory::Weak) {
+                        category = *signal <= policy_.wifi_signal_very_weak_dbm
+                            ? WifiSignalCategory::VeryWeak
+                            : *signal >= policy_.wifi_signal_weak_recover_dbm
+                                ? WifiSignalCategory::Normal : WifiSignalCategory::Weak;
+                    } else {
+                        category = *signal <= policy_.wifi_signal_very_weak_dbm
+                            ? WifiSignalCategory::VeryWeak
+                            : *signal <= policy_.wifi_signal_weak_dbm
+                                ? WifiSignalCategory::Weak : WifiSignalCategory::Normal;
+                    }
+                }
+                wifi_events_.insert_or_assign(key, WifiCacheEntry{event, category});
+                while (wifi_events_.size() > policy_.max_active_hypotheses * 2)
+                    wifi_events_.erase(wifi_events_.begin());
                 reconcileLocked(event.header().observed_at, emissions);
                 break;
             }

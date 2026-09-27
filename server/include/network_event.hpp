@@ -458,6 +458,15 @@ enum class RootCauseEvidenceKind : std::uint8_t {
     SocketEndpointSpecificProbeUnavailable,
     HopLevelEvidenceUnavailable,
     GatewayDeviceHealthUnavailable,
+    WifiAssociated,
+    WifiNotAssociated,
+    WifiSignalNormal,
+    WifiSignalWeak,
+    WifiSignalVeryWeak,
+    WifiTxBitrateLow,
+    WifiEvidenceUnavailable,
+    WifiEvidenceStale,
+    WifiInterfaceMismatch,
 };
 
 const char* rootCauseEvidenceKindName(RootCauseEvidenceKind kind) noexcept;
