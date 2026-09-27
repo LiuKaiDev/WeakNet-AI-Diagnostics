@@ -480,11 +480,17 @@ Tests:
 
 ## Phase 13: Optional LLM diagnostic agent and AI evaluation
 
+Status: AI V2.1 now provides the first advisory structured-diagnosis contract
+and evidence-explainer framework under `ai/v2`. It uses a deterministic fake
+provider only; no external LLM calls, RAG, embeddings, or agent behavior are
+implemented. The C++ diagnosis remains authoritative.
+
 Objective: add an advisory explanation layer after the deterministic core and export schema are stable.
 
 Scope:
 
-- consolidate experimental Python into one optional package;
+- keep AI V2 isolated from the legacy experimental raw-log/RAG scripts;
+- consume a versioned `DiagnosisSnapshot` derived from D-Bus V2 output;
 - consume versioned, redacted `IncidentBundle` files/API output rather than presentation logs;
 - use provider-neutral configuration and secret loading; support a no-provider/offline mode;
 - retrieve only reviewed/versioned knowledge;
