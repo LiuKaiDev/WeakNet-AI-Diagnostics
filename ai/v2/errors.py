@@ -54,3 +54,14 @@ class ProviderConfigurationError(AiLayerError):
 class ProviderSelectionError(AiLayerError):
     category = "InvalidProviderConfiguration"
 
+
+class DiagnosisSourceError(AiLayerError):
+    category = "DiagnosisSourceUnavailable"
+
+
+class DiagnosisSourceTimeout(DiagnosisSourceError):
+    category = "DiagnosisSourceTimeout"
+
+
+class MalformedDiagnosisSourcePayload(DiagnosisSourceError):
+    category = "MalformedDiagnosisSourcePayload"

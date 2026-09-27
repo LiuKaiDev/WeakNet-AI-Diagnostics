@@ -346,7 +346,7 @@ Keep these separate:
 
 A number in a README without its run artifact is an example, not evidence.
 
-### 16. Read optional AI/RAG code last
+### 16. Read optional AI code last
 
 Begin with `docs/AI_V2_ARCHITECTURE.md` and `ai/v2`: the versioned
 `DiagnosisSnapshot`, pure D-Bus-shaped adapter, deterministic prompt builder,
@@ -362,13 +362,21 @@ Read it only after the V2 contract. Do not begin with provider SDK code.
 
 Verify that:
 
-- the package consumes structured exported bundles rather than scraping daemon logs;
+- the package consumes structured D-Bus `GetDiagnosis` data rather than scraping daemon logs;
 - evidence citations refer to real bundle IDs;
 - core facts and model inference are visibly separated;
 - provider failure leaves deterministic C++ reports available;
 - secrets and network access are optional/configured;
 - prompt-injection and sensitive-data fixtures exist;
 - evaluation scores have recorded runs.
+
+For the current runtime product path, then read `ai/v2/sources/dbus.py` and
+`ai/v2/runtime.py`. The source is an adapter over the existing
+`com.example.WeakNet.Diagnostics2.GetDiagnosis` method; the HTTP layer only
+adapts requests to the transport-neutral explainer. Finally read
+`client/ai_explanation_client.cpp` to see the bounded explicit CLI request.
+`weaknetctl diagnose` remains entirely deterministic; only `--explain` crosses
+the optional process boundary.
 
 ## Three end-to-end traces to perform
 

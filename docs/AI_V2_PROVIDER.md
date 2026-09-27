@@ -107,10 +107,25 @@ and diagnosis payloads are not logged by default. Future debug logging must be
 explicit because payloads may include addresses, endpoints, interface names,
 or SSIDs.
 
+## Service operation
+
+Start the optional read-only service with:
+
+```text
+WEAKNET_LLM_PROVIDER=fake python3 -m ai.v2.runtime
+```
+
+It binds to `127.0.0.1:8765` by default (`WEAKNET_AI_HOST` and
+`WEAKNET_AI_PORT` may select another loopback address/port). The service stays
+live and reports an unavailable capability when DashScope is selected without
+`DASHSCOPE_API_KEY`; it does not silently construct `FakeLlmProvider`.
+Provider errors are mapped to safe categories and messages, and authorization
+headers, keys, raw model responses, and reasoning content are never returned
+to the CLI.
+
 ## Non-goals
 
 This stage does not add RAG, FAISS, BGE, embeddings, BM25, reranking, agents,
 tool calls, shell execution, remediation, network probes, or C++ diagnosis
 changes. The next stage is retrieval/RAG only after this provider contract and
 grounding boundary have been evaluated.
-

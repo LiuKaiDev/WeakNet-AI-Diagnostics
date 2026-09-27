@@ -73,7 +73,10 @@ weaknetctl diagnose
 and 2 for Unknown. `incidents` and `hypotheses` are successful listings and
 exit 0 even when entries exist. Daemon/D-Bus/usage errors exit 3 or higher.
 `diagnose` prints status, active incidents, and active hypotheses using only
-deterministic structured fields; it does not generate LLM prose.
+deterministic structured fields; it does not generate LLM prose. The explicit
+`weaknetctl diagnose --explain` form then calls the optional loopback AI V2
+service and renders its structured `ExplanationReport`. The deterministic
+section is printed first and is never replaced by model text.
 Probe-derived supporting, contradicting, and missing evidence appears through
 the existing hypothesis evidence fields and summaries, including the Wi-Fi
 cache's interface/freshness limitations; there is no diagnosis logic or
@@ -82,3 +85,9 @@ separate probe/Wi-Fi command in the CLI.
 There are no write, configuration, remediation, acknowledgement, or daemon
 control commands. JSON output is deferred because the current codebase has no
 JSON dependency suitable for a small stable product surface.
+
+AI explanation requests have a 38-second default total timeout, configurable
+through `WEAKNET_AI_TIMEOUT_SECONDS` and capped at 40 seconds. An unavailable
+AI service, provider timeout, invalid model output, or grounding violation is
+printed separately and leaves the deterministic Healthy/Degraded/Unknown exit
+code unchanged. `diagnose` without `--explain` never contacts AI.

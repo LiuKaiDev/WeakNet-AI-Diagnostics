@@ -208,6 +208,7 @@ class DashScopeProvider:
                 )
                 self._raise_for_status(response.status_code)
                 parsed, finish_status = self._parse_response(response.body)
+                parsed = self._normalize_snapshot_limitations(parsed, request)
                 return LlmProviderResult(
                     provider=self.provider_name,
                     model=self.config.model,
@@ -237,13 +238,25 @@ class DashScopeProvider:
         raise last_error or ProviderUnavailable("DashScope request failed")
 
     def _request_payload(self, request: LlmRequest) -> dict[str, Any]:
+        # DashScope's OpenAI-compatible json_object mode requires the literal
+        # lowercase word "json" in a message.  The shared prompt intentionally
+        # uses the schema's conventional uppercase spelling, so add only this
+        # transport-compatibility reminder; it does not change diagnosis
+        # semantics or the provider output contract.
+        system_prompt = request.system_prompt
+        if "json" not in system_prompt:
+            system_prompt += "\nReturn exactly one json object matching the requested schema."
         return {
             "model": self.config.model,
             "temperature": self.config.temperature,
             "stream": False,
+            # Qwen3 models may otherwise spend the request budget in hidden
+            # thinking mode.  Diagnosis authority is deterministic C++, so
+            # product explanations explicitly disable reasoning output.
+            "enable_thinking": False,
             "response_format": {"type": "json_object"},
             "messages": [
-                {"role": "system", "content": request.system_prompt},
+                {"role": "system", "content": system_prompt},
                 {"role": "user", "content": request.user_prompt},
             ],
         }
@@ -287,10 +300,136 @@ class DashScopeProvider:
             raise InvalidProviderOutput("DashScope content is not valid JSON") from error
         if not isinstance(payload, dict):
             raise InvalidProviderOutput("DashScope structured output must be an object")
+        payload = self._normalize_qwen_explanation(payload)
         finish_status = str(choice.get("finish_reason", "completed"))
         if finish_status not in ("stop", "completed", "success"):
             raise InvalidProviderOutput("DashScope response did not finish with complete JSON")
         return payload, finish_status
+
+    @staticmethod
+    def _normalize_snapshot_limitations(payload: dict[str, Any], request: LlmRequest) -> dict[str, Any]:
+        """Remove Qwen's accidental echo of deterministic prose limitations.
+
+        ``ExplanationReport`` already carries ``DiagnosisSnapshot.limitations``
+        independently.  Provider limitation references remain strict missing
+        evidence IDs; only exact echoes of those deterministic prose strings
+        are removed here.  Unknown IDs are retained so GroundingValidator can
+        reject them.
+        """
+        snapshot = request.snapshot
+        if snapshot is None or not isinstance(payload.get("limitations"), list):
+            return payload
+        diagnosis_limitations = set(snapshot.limitations)
+        if not diagnosis_limitations:
+            return payload
+        normalized = dict(payload)
+        normalized["limitations"] = [
+            item for item in payload["limitations"]
+            if not (
+                isinstance(item, dict)
+                and item.get("missing_evidence_id") in diagnosis_limitations
+            )
+        ]
+        return normalized
+
+    @staticmethod
+    def _normalize_qwen_explanation(payload: dict[str, Any]) -> dict[str, Any]:
+        """Normalize Qwen's observed structured envelope without relaxing grounding.
+
+        Some Qwen3 responses follow the semantic contract but choose names such
+        as ``response_schema_version`` and ``root_cause_hypotheses`` and put
+        role-separated evidence at the top level.  We accept that shape only
+        when it has exactly one hypothesis, so role-to-hypothesis attribution
+        is unambiguous.  The normal ``ProviderExplanationPayload`` parser and
+        ``GroundingValidator`` still enforce every ID, role, and limitation.
+        """
+        if "schema_version" in payload:
+            # Qwen may add descriptive metadata to evidence/limitation items
+            # even when it uses the requested top-level schema.  Preserve only
+            # the fields accepted by the existing strict contract; unknown
+            # authoritative top-level fields are still rejected downstream.
+            normalized = dict(payload)
+            if isinstance(payload.get("evidence_explanations"), list):
+                normalized["evidence_explanations"] = [
+                    {"evidence_id": item.get("evidence_id"),
+                     "explanation": item.get("explanation", item.get("description"))}
+                    if isinstance(item, dict) and set(item) - {"evidence_id", "explanation"}
+                    else item
+                    for item in payload["evidence_explanations"]
+                ]
+            if isinstance(payload.get("limitations"), list):
+                normalized["limitations"] = [
+                    {"missing_evidence_id": item.get("missing_evidence_id", item.get("evidence_id")),
+                     "explanation": item.get("explanation", item.get("description"))}
+                    if isinstance(item, dict) and set(item) - {"missing_evidence_id", "explanation"}
+                    else item
+                    for item in payload["limitations"]
+                ]
+            return normalized
+        required = {"response_schema_version", "summary", "root_cause_hypotheses"}
+        if not required.issubset(payload):
+            return payload
+        if payload.get("response_schema_version") != EXPLANATION_SCHEMA_VERSION:
+            raise InvalidProviderOutput("Qwen explanation schema version is unsupported")
+        hypotheses = payload.get("root_cause_hypotheses")
+        if not isinstance(hypotheses, list) or len(hypotheses) != 1:
+            raise InvalidProviderOutput(
+                "Qwen explanation format cannot safely map multiple hypotheses"
+            )
+        hypothesis = hypotheses[0]
+        if not isinstance(hypothesis, dict):
+            raise InvalidProviderOutput("Qwen hypothesis explanation is malformed")
+
+        def references(key: str) -> list[str]:
+            values = payload.get(key, [])
+            if not isinstance(values, list):
+                raise InvalidProviderOutput("Qwen evidence section is malformed")
+            result: list[str] = []
+            for item in values:
+                if not isinstance(item, dict) or not isinstance(item.get("evidence_id"), str):
+                    raise InvalidProviderOutput("Qwen evidence reference is malformed")
+                result.append(item["evidence_id"])
+            return result
+
+        limitations = payload.get("limitations", [])
+        if not isinstance(limitations, list):
+            raise InvalidProviderOutput("Qwen limitations section is malformed")
+        missing_values = payload.get("missing_evidence", [])
+        if not isinstance(missing_values, list):
+            raise InvalidProviderOutput("Qwen missing evidence section is malformed")
+        # Qwen3 may render limitations as prose strings.  The authoritative
+        # missing IDs come from the role-separated evidence section, so map
+        # each such ID to its supplied description and retain no free-form
+        # limitation as an evidence reference.
+        normalized_limitations = []
+        for item in missing_values:
+            if not isinstance(item, dict) or not isinstance(item.get("evidence_id"), str):
+                raise InvalidProviderOutput("Qwen missing evidence reference is malformed")
+            explanation = item.get("description", "Missing evidence remains unavailable.")
+            if not isinstance(explanation, str) or not explanation:
+                raise InvalidProviderOutput("Qwen missing evidence description is malformed")
+            normalized_limitations.append({
+                "missing_evidence_id": item["evidence_id"],
+                "explanation": explanation,
+            })
+
+        explanation = hypothesis.get("explanation")
+        hypothesis_id = hypothesis.get("hypothesis_id")
+        if not isinstance(explanation, str) or not explanation or not isinstance(hypothesis_id, str):
+            raise InvalidProviderOutput("Qwen hypothesis explanation is malformed")
+        return {
+            "schema_version": EXPLANATION_SCHEMA_VERSION,
+            "summary": payload["summary"],
+            "hypothesis_explanations": [{
+                "hypothesis_id": hypothesis_id,
+                "explanation": explanation,
+                "supporting_evidence_ids": references("supporting_evidence"),
+                "contradicting_evidence_ids": references("contradicting_evidence"),
+                "missing_evidence_ids": references("missing_evidence"),
+            }],
+            "evidence_explanations": [],
+            "limitations": normalized_limitations,
+        }
 
     async def _backoff(self, attempt: int, deadline: float) -> None:
         delay = self.config.retry_backoff_seconds * (2 ** (attempt - 1))

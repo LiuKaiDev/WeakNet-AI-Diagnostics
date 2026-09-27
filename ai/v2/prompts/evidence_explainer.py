@@ -22,6 +22,16 @@ the deterministic evidence directly establishes it.
 Describe limitations caused by missing evidence clearly.
 Do not provide destructive, mutating, or troubleshooting shell commands.
 Return only the requested structured output and no hidden reasoning trace.
+Return exactly one json object with these keys and no others:
+schema_version, summary, hypothesis_explanations, evidence_explanations,
+limitations.
+Each hypothesis_explanations item must contain hypothesis_id, explanation,
+supporting_evidence_ids, contradicting_evidence_ids, and missing_evidence_ids.
+Copy every supplied evidence_id exactly once into the matching role list;
+never omit, reorder into another role, or invent an evidence_id.
+Each limitations item must contain missing_evidence_id and explanation.
+Do not return authoritative_status, root_cause_hypotheses, active_incidents,
+or top-level supporting_evidence/contradicting_evidence/missing_evidence.
 """
 
 

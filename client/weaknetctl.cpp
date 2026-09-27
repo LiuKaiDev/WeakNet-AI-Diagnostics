@@ -6,6 +6,7 @@
 #include <string>
 #include <vector>
 
+#include "ai_explanation_client.hpp"
 #include "common.hpp"
 
 namespace {
@@ -171,18 +172,20 @@ int statusExit(const Dict& status) {
 }
 
 void usage() {
-    std::cout << "Usage: weaknetctl <status|incidents|hypotheses|diagnose>\n";
+    std::cout << "Usage: weaknetctl <status|incidents|hypotheses|diagnose [--explain]>\n";
 }
 
 }  // namespace
 
 int main(int argc, char** argv) {
-    if (argc != 2 || std::string(argv[1]) == "--help" || std::string(argv[1]) == "-h") {
+    if (argc < 2 || argc > 3 || std::string(argv[1]) == "--help" || std::string(argv[1]) == "-h") {
         usage();
-        return argc == 2 ? 0 : 3;
+        return argc >= 2 && argc <= 3 ? 0 : 3;
     }
     const std::string command = argv[1];
-    if (command != "status" && command != "incidents" && command != "hypotheses" && command != "diagnose") {
+    const bool explain = argc == 3 && std::string(argv[2]) == "--explain";
+    if ((command != "status" && command != "incidents" && command != "hypotheses" && command != "diagnose") ||
+        (argc == 3 && (!explain || command != "diagnose"))) {
         usage();
         return 3;
     }
@@ -243,5 +246,43 @@ int main(int argc, char** argv) {
         printList(values, "Root-cause hypotheses");
     }
     dbus_connection_unref(connection);
+    if (explain) {
+        weaknet_ai::ExplanationClientConfig config;
+        if (const char* host = std::getenv("WEAKNET_AI_HOST")) config.host = host;
+        if (const char* port = std::getenv("WEAKNET_AI_PORT")) {
+            try {
+                const auto parsed = std::stoul(port);
+                if (parsed > 0 && parsed <= 65535) config.port = static_cast<std::uint16_t>(parsed);
+            } catch (...) {
+                // Keep the safe default; malformed optional configuration must
+                // not make deterministic diagnosis unavailable.
+            }
+        }
+        if (const char* timeout = std::getenv("WEAKNET_AI_TIMEOUT_SECONDS")) {
+            try {
+                const auto seconds = std::stoll(timeout);
+                if (seconds > 0 && seconds <= 40) config.timeout_ms = seconds * 1000;
+            } catch (...) {
+                // Keep the bounded default.
+            }
+        }
+        const auto ai = weaknet_ai::ExplanationClient(config).explainCurrent();
+        if (!ai.success) {
+            std::cout << "\nAI explanation:\n  unavailable\n"
+                      << "AI error:\n  " << ai.message << "\n";
+        } else {
+            const auto& report = ai.report;
+            std::cout << "\nAI explanation" << (report.simulated ? " (simulated)" : "") << ":\n"
+                      << "  " << report.summary << "\n";
+            for (const auto& hypothesis : report.hypotheses) {
+                std::cout << "  " << hypothesis.explanation << "\n";
+            }
+            if (!report.limitations.empty()) {
+                std::cout << "\nLimitations:\n";
+                for (const auto& limitation : report.limitations)
+                    std::cout << "  - " << limitation << "\n";
+            }
+        }
+    }
     return result;
 }

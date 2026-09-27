@@ -1,0 +1,3 @@
+# Optional only: required for POST /v2/explanations/current on a live session bus.
+# Fake mode and caller-supplied /v2/explanations need only Python's standard library.
+dbus-next>=0.2.3,<0.3

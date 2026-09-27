@@ -77,6 +77,7 @@ class DashScopeProviderTests(unittest.TestCase):
         endpoint, headers, payload, timeout, _ = transport.calls[0]
         self.assertEqual(payload["model"], "qwen-test")
         self.assertEqual(payload["temperature"], 0.2)
+        self.assertFalse(payload["enable_thinking"])
         self.assertEqual(payload["messages"][1]["content"], request.user_prompt)
         self.assertEqual(result.request_id, "request-7")
         self.assertEqual(result.provider_request_id, "provider-request-1")
@@ -137,6 +138,45 @@ class DashScopeProviderTests(unittest.TestCase):
         with self.assertRaises(ProviderUnavailable):
             create_llm_provider("dashscope", environ={})
         self.assertEqual(create_llm_provider("fake", environ={}).provider_name, "fake")
+
+    def test_qwen_alternate_envelope_is_strictly_normalized(self):
+        snapshot = snapshot_with_hypothesis()
+        hypothesis = snapshot.hypotheses[0]
+        structured = {
+            "response_schema_version": "weaknet.ai.explanation.v1",
+            "summary": "grounded",
+            "root_cause_hypotheses": [{
+                "hypothesis_id": hypothesis.hypothesis_id,
+                "type": hypothesis.type,
+                "confidence": hypothesis.confidence,
+                "state": hypothesis.state,
+                "explanation": "grounded explanation",
+            }],
+            "supporting_evidence": [
+                {"evidence_id": item.evidence_id, "kind": item.kind}
+                for item in hypothesis.supporting_evidence
+            ],
+            "contradicting_evidence": [
+                {"evidence_id": item.evidence_id, "kind": item.kind}
+                for item in hypothesis.contradicting_evidence
+            ],
+            "missing_evidence": [
+                {"evidence_id": item.evidence_id, "kind": item.kind}
+                for item in hypothesis.missing_evidence
+            ],
+            "limitations": [
+                {"evidence_id": item.evidence_id, "description": "unavailable"}
+                for item in hypothesis.missing_evidence
+            ],
+        }
+        response = DashScopeResponse(200, json.dumps({
+            "choices": [{"message": {"content": json.dumps(structured)}, "finish_reason": "stop"}]
+        }).encode())
+        provider = DashScopeProvider(self.config(), SequenceTransport(response))
+        report = EvidenceExplainerService(provider).explain_sync(snapshot)
+        self.assertEqual(report.validation_status, "validated")
+        self.assertEqual(report.hypotheses[0].type, hypothesis.type)
+        self.assertEqual(report.hypotheses[0].confidence, hypothesis.confidence)
 
     def test_capabilities_do_not_claim_reachability(self):
         without_key = provider_capabilities({})

@@ -103,14 +103,24 @@ provider unavailable/timeout, invalid provider output, grounding violation,
 and internal/provider-boundary failure. AI failures never map to network
 health state.
 
-## DashScope boundaries, HTTP, and legacy relationship
+## Runtime product path
 
-FastAPI is not installed in this repository, so no HTTP surface is added in
-V2.2. A future read-only `/health/live`, `/v2/capabilities`, and
-`/v2/explanations` adapter may wrap the same service without making a real
-provider the default. Capability reporting distinguishes configured from
-reachable. The legacy V1 raw-log/RAG scripts remain untouched and are not part
-of the C++ daemon availability path.
+The optional `ai.v2.runtime` module provides a standard-library,
+loopback-only HTTP adapter around `EvidenceExplainerService`:
+
+- `GET /health/live` is provider-independent liveness;
+- `GET /v2/capabilities` reports selection and configuration truthfully;
+- `POST /v2/explanations` accepts a canonical `DiagnosisSnapshot`;
+- `POST /v2/explanations/current` obtains the snapshot through D-Bus V2.
+
+The C++ CLI calls only the explicit `--explain` path and uses a bounded
+localhost request. A missing DashScope key leaves the service live but makes
+explanation calls return a structured `ProviderUnavailable` error. There is
+no fake fallback when DashScope is selected. The real source uses
+`com.example.WeakNet`, `/com/example/WeakNet/V2`,
+`com.example.WeakNet.Diagnostics2`, and `GetDiagnosis`; `dbus-next` is loaded
+only when that source is used, and injected clients keep tests independent of
+a live bus. Legacy V1 raw-log/RAG scripts remain isolated.
 
 ## Privacy and next stage
 

@@ -36,7 +36,7 @@ def provider_capabilities(environ: Optional[Mapping[str, str]] = None) -> dict[s
             "fake": {"available": True, "configured": True, "simulated": True},
             "dashscope": {
                 "configured": configured,
-                "available": False,
+                "available": configured,
                 "simulated": False,
                 "reachable": False,
                 "model": values.get("WEAKNET_LLM_MODEL", "qwen-plus"),
@@ -44,4 +44,3 @@ def provider_capabilities(environ: Optional[Mapping[str, str]] = None) -> dict[s
         },
         "rag_available": False,
     }
-

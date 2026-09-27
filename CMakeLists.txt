@@ -192,7 +192,7 @@ if(ENABLE_EBPF)
     add_dependencies(weaknet-dbus-server weaknet_bpf)
 endif()
 
-add_executable(weaknetctl client/weaknetctl.cpp)
+add_executable(weaknetctl client/weaknetctl.cpp client/ai_explanation_client.cpp)
 target_link_libraries(weaknetctl PRIVATE weaknet_build_options PkgConfig::DBUS)
 target_include_directories(weaknetctl PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/server/include")

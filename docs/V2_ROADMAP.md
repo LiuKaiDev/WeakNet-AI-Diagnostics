@@ -478,16 +478,19 @@ Tests:
 - regression threshold mechanism based only on an approved measured baseline;
 - stress/soak jobs kept distinct from microbenchmarks.
 
-## Phase 13: Optional LLM diagnostic agent and AI evaluation
+## Phase 13: Optional LLM explanation and AI evaluation
 
-Status: AI V2.2 provides the advisory structured-diagnosis contract,
-grounding framework, and an opt-in real `DashScopeProvider` under `ai/v2`.
-Normal tests use the deterministic fake provider; live requests require
-explicit provider selection, an opt-in flag, and `DASHSCOPE_API_KEY`. No RAG,
-embeddings, or agent behavior is implemented. The C++ diagnosis remains
-authoritative.
+Status: the End-to-End AI Explanation Product Wiring stage is implemented.
+AI V2.2 provides the advisory structured-diagnosis contract, grounding
+framework, and opt-in real `DashScopeProvider`; this stage adds the optional
+loopback service, real D-Bus V2 diagnosis source, and explicit
+`weaknetctl diagnose --explain` path. Normal tests use the deterministic fake
+provider; live requests require explicit provider selection, an opt-in flag,
+and `DASHSCOPE_API_KEY`. No RAG, embeddings, or agent behavior is implemented.
+The C++ diagnosis remains authoritative.
 
-Objective: add an advisory explanation layer after the deterministic core and export schema are stable.
+Objective: provide a read-only advisory explanation product after the
+deterministic core and export schema are stable.
 
 Scope:
 
@@ -495,26 +498,26 @@ Scope:
 - consume a versioned `DiagnosisSnapshot` derived from D-Bus V2 output;
 - integrate a bounded, injectable DashScope/Qwen transport with explicit error
   mapping, retry, timeout, and response-size policies;
-- consume versioned, redacted `IncidentBundle` files/API output rather than presentation logs;
+- consume the structured D-Bus V2 `GetDiagnosis` result through an injectable
+  `DiagnosisSource`, rather than presentation logs;
 - use provider-neutral configuration and secret loading; support a no-provider/offline mode;
-- retrieve only reviewed/versioned knowledge;
 - require evidence citations, uncertainty, and explicit separation of core findings from model inference;
 - add prompt-injection defenses, data policy, timeout/retry/token/cost limits, and output schema validation;
-- build a versioned AI evaluation dataset and runner.
+- expose health/capability/explanation endpoints and keep the service loopback-only.
 
 Acceptance criteria:
 
 - deleting or not installing the optional package has no effect on core build/runtime/tests;
-- the agent has no privileged control API and cannot mutate daemon incident/root-cause state;
-- exports are redacted and size-bounded according to tested policy;
+- the explanation layer has no privileged control API and cannot mutate daemon incident/root-cause state;
+- D-Bus input and HTTP requests are bounded and size-bounded according to tested policy;
 - reports distinguish deterministic core facts from model inference and cite valid bundle evidence IDs;
 - provider/network failure produces a clear optional-layer failure while core output remains available;
 - AI quality claims are made only from recorded evaluation runs.
 
 Tests and evaluation:
 
-- bundle schema/version and redaction tests;
-- offline deterministic parser/retrieval tests;
+- diagnosis-source adapter, timeout, malformed-payload, service endpoint, and structured-report tests;
+- offline deterministic parser and grounding tests;
 - malicious/prompt-injection fixture tests;
 - evidence-citation validity and unsupported-claim checks;
 - cause-code top-k, groundedness, abstention, latency, and cost metrics from a recorded dataset run;

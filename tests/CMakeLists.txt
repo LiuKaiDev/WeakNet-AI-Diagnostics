@@ -9,6 +9,10 @@ endfunction()
 weaknet_add_cpp_test(serializer_roundtrip serializer_test.cpp)
 target_link_libraries(serializer_roundtrip PRIVATE weaknet_serialization)
 
+weaknet_add_cpp_test(ai_explanation_client ai_explanation_client_test.cpp
+    "${PROJECT_SOURCE_DIR}/client/ai_explanation_client.cpp")
+target_include_directories(ai_explanation_client PRIVATE "${PROJECT_SOURCE_DIR}/client")
+
 weaknet_add_cpp_test(network_quality_baseline network_quality_assessor_test.cpp)
 target_link_libraries(network_quality_baseline PRIVATE weaknet_quality PkgConfig::GLOG)
 
