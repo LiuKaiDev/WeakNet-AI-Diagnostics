@@ -179,6 +179,21 @@ BM25 lexical retrieval 始终可用。BGE、FAISS 与 reranker 是 lazy、可选
 - 最终 report 从 `DiagnosisSnapshot` 复制 root cause、confidence 和 evidence roles，而不是相信模型文本。
 - AI service、provider 或 retrieval 失败会单独报告，不会删除确定性诊断或改变其退出码。
 
+## 验证与评估
+
+系统回归验证与 AI/RAG 评估衡量不同对象：前者验证确定性诊断、接口和 Lab 框架，后者验证检索与模型输出边界。
+
+| 验证项 | 结果 |
+| --- | --- |
+| C++ CTest | 31 个登记测试，30 个执行通过、0 失败；1 个 network-namespace integration test 因 host capability 跳过 |
+| Python AI/RAG tests | 65 个测试用例，62 个执行通过；3 个 opt-in live-provider tests 跳过 |
+| WeakNet Lab tests | 16 个测试用例，15 个离线测试通过；1 个 privileged integration test 跳过 |
+| RAG retrieval evaluation | 8 个本地诊断检索 case |
+| BM25 | Recall@1 `0.750` · Recall@3 `1.000` · Recall@5 `1.000` · MRR `0.875` |
+| 已记录的真实 Qwen Advisor 验证 | 3 / 3 个语义场景通过：`LocalLinkSuspected`、`RemoteOrUpstreamDegradation`、`InsufficientEvidence` |
+
+BM25 指标来自项目内置的 8-case 小型诊断检索集，只用于回归与架构验证，不代表通用网络诊断准确率。真实 Qwen Advisor 验证仅覆盖上述 3 个语义场景；在这些场景中 schema、diagnosis grounding 与 citation grounding 均通过当前 validator，非法引用和未引用知识声明均为 0，但这不表示普遍的“100% AI 准确率”。真实 BGE-M3/reranker Hybrid-RAG 仍受本地模型权重和运行环境限制，因此项目不声明 Hybrid-RAG live benchmark。
+
 ## 使用方式
 
 ### 构建与测试
@@ -261,14 +276,6 @@ export WEAKNET_LAB_BUILD_DIR=build/no-ebpf
 - `observability-gap`：可选 telemetry 不可用。
 
 缺少 network namespace 或 capability 时，场景写入明确的 `SKIP`，不会修改 host network。`fixture-demo` 是明确标记的 `SIMULATION`，不代表真实 kernel telemetry。
-
-## 测试与验证
-
-- C++ CTest 覆盖 topology、socket lifecycle、`TCP_INFO`、route attribution、EventBus、MetricStore、ActiveProbe、nl80211、IncidentEngine、RootCauseEngine、D-Bus、CLI、lifecycle 与 C ABI contract。
-- Python tests 覆盖 `DiagnosisSnapshot`、provider、schema、`GroundingValidator`、BM25/hybrid retrieval、RAG Advisor、`CitationGroundingValidator` 与 runtime HTTP boundary。
-- 真实 Qwen explanation/advisor 与 lexical RAG 验证为显式 opt-in；普通测试不会访问外部 provider。
-- namespace/eBPF/Wi-Fi 测试受 host capability 和设备限制，缺少条件时明确 skip/degraded。
-- 小型 fixture 用于验证 schema 与 grounding，不作为生产准确率或“100% citation accuracy”声明。
 
 ## 项目结构
 
