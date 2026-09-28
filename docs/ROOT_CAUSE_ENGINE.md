@@ -1,6 +1,6 @@
 # RootCauseEngine (deterministic probe enrichment)
 
-`RootCauseEngine` is the diagnosis stage after `IncidentEngine`. It consumes
+`RootCauseEngine` is the deterministic diagnosis layer after `IncidentEngine`. It consumes
 typed active incident transitions, modeled route/uplink observations, and
 typed `ActiveProbe` observations. It publishes bounded
 `RootCauseHypothesisObservation` values on the in-process `EventBus` and
@@ -166,6 +166,7 @@ endpoint-specific validation remain unobserved.
 
 ## Non-goals
 
-No new collector or transport, packet-loss window, jitter, traceroute, DNS,
-HTTP/TLS probing, IPv6 probe expansion, Wi-Fi/eBPF redesign, probabilistic
-scoring, persistence, AI/RAG, or remediation is part of this stage.
+The engine does not provide packet-loss windows, jitter, traceroute, DNS,
+HTTP/TLS probing, probabilistic scoring, persistence, AI/RAG or remediation.
+Those omissions are explicit capability boundaries rather than evidence of a
+healthy or failed network.

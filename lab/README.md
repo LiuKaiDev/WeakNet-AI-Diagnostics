@@ -1,7 +1,7 @@
 # WeakNet Lab
 
-WeakNet Lab is the Stage A reproducible-scenario and evaluation harness for the
-real deterministic WeakNet stack. It creates two isolated Linux network
+WeakNet Lab is the reproducible scenario and evaluation harness for the real
+deterministic WeakNet stack. It creates two isolated Linux network
 namespaces, starts the built `weaknet-dbus-server`, generates local traffic,
 applies a bounded fault only to lab-owned interfaces, reads the structured
 D-Bus diagnosis, and writes a machine-readable evaluation artifact.
@@ -140,3 +140,7 @@ WEAKNET_RUN_LAB_INTEGRATION=1 \
 
 Run it only on a disposable or approved Linux host with the prerequisites
 reported ready by `doctor`.
+
+Privileged scenarios have capability-gated validation. A skipped run is not a
+live pass, and the repository does not claim successful namespace execution on
+hosts where `doctor` reports missing privileges.

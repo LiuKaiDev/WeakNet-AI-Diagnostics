@@ -1,4 +1,4 @@
-# IncidentEngine (first deterministic stage)
+# IncidentEngine
 
 `IncidentEngine` consumes committed typed V2 observations from `EventBus` and
 maintains bounded incident lifecycles. It detects observable conditions; it
@@ -65,7 +65,7 @@ immutable copies through `listActiveIncidents`, `getIncident`, and
 `recentResolvedIncidents`. Incident observations are a separate typed EventBus
 payload and are never encoded as fake numeric MetricStore series.
 
-This stage deliberately does not implement causal graphs, Bayesian/ML/LLM
-analysis, persistence, notifications, D-Bus V2, weaknetctl, new collectors,
-or probe/Wi-Fi/eBPF redesign. `RootCauseEngine` is a separate deterministic
-consumer of these incident observations; see `ROOT_CAUSE_ENGINE.md`.
+The engine does not implement causal graphs, Bayesian/ML/LLM analysis,
+persistence or remediation. `RootCauseEngine` is the separate deterministic
+consumer of incident observations; D-Bus V2 and `weaknetctl` expose the
+resulting snapshots through later application layers.

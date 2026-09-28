@@ -1,66 +1,57 @@
-# AI V2 runtime wiring
+# AI Runtime
 
-The optional explanation product is deliberately outside `weaknetd`:
+The optional runtime is deliberately outside the C++ daemon:
 
 ```text
-weaknetd -- D-Bus V2 GetDiagnosis --> ai.v2.runtime -- provider --> Qwen
+weaknet-dbus-server -- D-Bus V2 GetDiagnosis --> ai.v2.runtime --> Qwen
      ^                                      ^
      |                                      |
-weaknetctl diagnose                  weaknetctl diagnose --explain
+weaknetctl diagnose                  weaknetctl diagnose --explain/--advise
 ```
 
-`weaknetctl diagnose` queries the deterministic C++ service and has no Python,
-HTTP, or provider dependency. With `--explain`, it prints that same result
-first, then makes one bounded request to the loopback AI service. The AI result
-is an `ExplanationReport`; it cannot alter the type, confidence, evidence
-roles, status, or exit code printed by the deterministic section.
+`weaknetctl diagnose` always queries deterministic C++ state first. `--explain`
+adds an `ExplanationReport`; `--advise` calls the separate grounded advisor
+and adds cited knowledge, safe checks and limitations. Neither mode can alter
+diagnosis fields or the deterministic exit code.
 
-`weaknetctl diagnose --advise` is a separate additive mode. It keeps the same
-deterministic section first, then calls read-only `/v2/advice/current` and
-renders cited knowledge, safe recommended checks, limitations, and truthful
-`lexical`/`hybrid` retrieval mode. It never changes the existing `--explain`
-path.
-
-When deterministic diagnosis has no active root-cause hypothesis, advice is
-`not_applicable`: the runtime does not retrieve knowledge or call a provider,
-and the CLI reports that no active hypothesis is available for advice. This is
-distinct from retrieval or provider unavailability and from validation failure.
-
-## Service
+## Start the service
 
 ```bash
-WEAKNET_LLM_PROVIDER=fake python3 -m ai.v2.runtime
+WEAKNET_LLM_PROVIDER=fake python -m ai.v2.runtime
 ```
 
-The default listener is `127.0.0.1:8765`. Endpoints are `GET /health/live`,
-`GET /v2/capabilities`, `GET /v2/rag/capabilities`, `POST /v2/explanations`,
-`POST /v2/explanations/current`, `POST /v2/advice`, and
-`POST /v2/advice/current` (D-Bus V2 source). Install the
-optional `dbus-next` package for the current-diagnosis endpoint. Unit tests
-inject a source/client and do not require a live bus.
+The service binds to `127.0.0.1:8765` by default and exposes:
 
-`WEAKNET_LLM_PROVIDER=fake` starts without credentials. Selecting `dashscope`
-without `DASHSCOPE_API_KEY` leaves liveness available but returns an explicit
-`ProviderUnavailable` explanation error. There is no fake fallback. Model
-selection remains generic through `WEAKNET_LLM_MODEL`.
+```text
+GET  /health/live
+GET  /v2/capabilities
+GET  /v2/rag/capabilities
+POST /v2/explanations
+POST /v2/explanations/current
+POST /v2/advice
+POST /v2/advice/current
+```
+
+The `current` endpoints use the session-D-Bus V2 source. Install
+`dbus-next` for that source; unit tests inject a source/client and do not need
+a live bus. A caller-supplied snapshot can be used without `dbus-next`.
 
 ## Failure and security behavior
 
-The source distinguishes D-Bus unavailability, timeout, and malformed payload;
+The source distinguishes D-Bus unavailability, timeout and malformed payload;
 the provider distinguishes authentication, rate limit, timeout, server,
-schema, and grounding errors. The CLI displays a concise AI error while
-retaining the deterministic status exit code. The default CLI timeout is 38
-seconds and is capped at 40 seconds.
+schema and grounding errors. The CLI reports AI failure separately while
+retaining Healthy/Degraded/Unknown from C++.
 
-Only structured diagnosis fields used by the applicable prompt builder cross
-the AI boundary. RAG knowledge is delimited as untrusted data and every
-knowledge-backed advice item requires an exact stable citation ID. No logs,
-environment dump, API key, authorization header, or model reasoning content is
-logged or returned. RAG/provider failure is isolated from explanations and
-deterministic diagnosis; advice has no agent, remediation, shell execution, or
-mutating action capability.
+Only structured diagnosis fields used by the applicable prompt cross the AI
+boundary. Knowledge is delimited as untrusted data and every advice item must
+cite an exact stable chunk identity. Logs, environment dumps, API keys,
+authorization headers, raw responses and model reasoning are not returned or
+logged. There is no shell execution, remediation or mutating action.
 
-The explicit live smoke test additionally requires
-`WEAKNET_RUN_LIVE_LLM_TESTS=1`, `WEAKNET_RUN_LIVE_DBUS_AI_TEST=1`,
-`WEAKNET_LLM_PROVIDER=dashscope`, `DASHSCOPE_API_KEY`, and a running session-
-bus daemon. It is skipped in ordinary tests.
+When no active root-cause hypothesis exists, advice is `not_applicable`: the
+runtime does not retrieve knowledge or call a provider.
+
+An explicit live smoke test additionally requires a configured DashScope
+provider, key, session bus and its opt-in flags. Ordinary tests make no
+external provider calls.

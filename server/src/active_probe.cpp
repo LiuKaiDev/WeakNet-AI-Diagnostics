@@ -168,7 +168,7 @@ ProbeAttemptResult ActiveProbe::nativeProbe(const ProbeTarget& target, std::uint
                                             std::chrono::milliseconds timeout,
                                             std::stop_token token) const {
     if (target.family != AF_INET)
-        return {ProbeStatus::TransportUnavailable, std::nullopt, "IPv4 transport only in this stage"};
+        return {ProbeStatus::TransportUnavailable, std::nullopt, "IPv4 transport only"};
     ScopedFd socket_fd(::socket(AF_INET, SOCK_DGRAM, IPPROTO_ICMP));
     if (!socket_fd) {
         const int error = errno;

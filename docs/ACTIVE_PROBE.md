@@ -37,7 +37,7 @@ bounded attempt. `Unreachable` parsing is reserved for a later stage.
 
 RTT is measured from monotonic send/receive timestamps and reported as
 `rtt_us`. Timeout, unavailable, no-target, and invalid results have no RTT
-value. A timeout is one observation, not a packet-loss percentage; this stage
+value. A timeout is one observation, not a packet-loss percentage; ActiveProbe
 does not calculate loss windows, jitter, or infer path health.
 
 Every observation carries `NetnsId`, target kind (`Gateway` or `Remote`),
@@ -76,5 +76,5 @@ not the observed TCP socket's endpoint and cannot prove ISP or remote-server
 failure. No packet-loss rate, timeout percentage, or probe incident is
 calculated. See `ROOT_CAUSE_ENGINE.md` for exact confidence rules.
 
-This stage deliberately does not store RTT in MetricStore, diagnose DNS,
-implement traceroute, redesign Wi-Fi/eBPF, or perform remediation.
+ActiveProbe does not diagnose DNS, implement traceroute, redesign Wi-Fi/eBPF,
+or perform remediation.

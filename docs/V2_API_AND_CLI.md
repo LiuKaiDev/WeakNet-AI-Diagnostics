@@ -1,7 +1,8 @@
 # V2 read-only API and `weaknetctl`
 
-This is the first product-surface stage for the already-computed V2 state. It
-is versioned but experimental and additive to the existing V1 interface.
+This is the current read-only product surface for V2 state. It is versioned,
+additive to the retained V1 compatibility interface, and does not expose
+network mutation or remediation operations.
 
 ## D-Bus surface
 

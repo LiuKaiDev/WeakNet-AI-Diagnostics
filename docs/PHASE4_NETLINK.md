@@ -1,5 +1,8 @@
 # Phase 4 Netlink topology collector
 
+> Historical implementation note. Socket, diagnosis, D-Bus V2, CLI, lab and
+> AI/RAG components mentioned as later work are now implemented.
+
 ## Boundary and ownership
 
 Phase 4 adds one authoritative `weaknet_dbus::v2::NetlinkCollector`. It owns a read-only `NETLINK_ROUTE` socket, the dump/notification lifecycle, a bounded reconciled topology snapshot, selected-uplink policy, and collector telemetry. The collector is owned by `DaemonApplication` and runs an owned `std::jthread`; no netlink worker is detached.
@@ -71,6 +74,9 @@ Telemetry exposes successful reconciliations, failed/interrupted dumps, parser e
 
 The ordinary CTest suite does not create veths, routes, or addresses: the namespace test only exercises collector startup in a disposable namespace and skips when `CAP_SYS_ADMIN`/namespace creation is unavailable. No host namespace mutation was performed. Sanitizer and compiler status is reported from the actual validation run.
 
-## Deferred work
+## Subsequent implementation
 
-SocketTracker, TCP semantics, eBPF redesign, active probes, Wi-Fi redesign, IncidentEngine, RootCauseEngine, V2/system D-Bus, `weaknetctl`, WeakNet Lab productization, and Python/AI changes remain later phases.
+The topology collector now feeds SocketTracker route attribution,
+IncidentEngine, RootCauseEngine, D-Bus V2, `weaknetctl`, ActiveProbe, Wi-Fi
+evidence and WeakNet Lab. Full Linux policy-routing equivalence remains outside
+the modeled topology boundary.

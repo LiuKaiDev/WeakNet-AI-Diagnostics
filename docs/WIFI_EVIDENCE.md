@@ -1,6 +1,6 @@
 # V2 Wi-Fi evidence
 
-`WifiCollector` is the first V2 Wi-Fi evidence stage. It is an optional,
+`WifiCollector` is the V2 Wi-Fi evidence component. It is an optional,
 read-only collector owned by `DaemonApplication`. It does not diagnose a root
 cause, open incidents, configure wireless state, or replace the legacy V1 RSSI
 compatibility path.
@@ -72,8 +72,8 @@ default freshness policy is ten seconds; there is no wall-clock comparison,
 sub-second polling, or per-query thread. Failure to initialize or resolve
 nl80211 degrades this optional component while the daemon continues.
 
-Periodic polling is intentional for this first stage. Multicast association
-notifications and a broader wireless framework are future work.
+Periodic polling is the current bounded collection model. Multicast
+association notifications and a broader wireless framework are not implemented.
 
 ## Interpretation boundaries
 
@@ -98,7 +98,7 @@ cumulative counters and does not claim AP health, RF interference, roaming
 history, or endpoint-specific loss.
 
 The collector operates only in the daemon's current network namespace, like
-the existing Phase 4 topology collector. It does not scan, discover APs,
+the RTNETLINK topology collector. It does not scan, discover APs,
 roam, reconnect, control NetworkManager/wpa_supplicant, change regulatory or
 power settings, or handle credentials.
 

@@ -1,5 +1,8 @@
 # Phase 3 internal data plane
 
+> Historical implementation note. Later V2 components described as deferred
+> below are now implemented; use `V2_ARCHITECTURE.md` for current architecture.
+
 ## Implemented boundary
 
 Phase 3 adds the internal C++20 `NetworkEvent`, `EventBus`, `MetricStore`, clock, and V1 observation bridge alongside the V1 model. The existing `com.example.WeakNet` session-bus methods/signals, C ABI, quality computation, `.bin` files, Ping behavior, netlink/TCP/eBPF implementations, and `NetInfo` fields still use the V1 path.
@@ -95,6 +98,9 @@ Startup constructs the clock, bus, and store; starts the dispatcher; derives the
 
 CTest targets `network_event_schema`, `event_bus_concurrency`, `metric_store_semantics`, and `v1_observation_adapter` cover schema validation/value semantics, concurrent total ordering, reentrancy, RAII synchronization, exception containment, exact saturation counters, retention/cardinality/staleness, immutable concurrent snapshots, namespace/scope separation, fake-clock progression, and representative V1 mapping. Sanitizer results are reported from the actual validation run rather than asserted in this document.
 
-## Deferred work
+## Subsequent implementation
 
-This phase does not redesign netlink/uplink selection, SocketTracker/TCP semantics, eBPF schema/hooks, probe matching, or Wi-Fi discovery. It adds no IncidentEngine, RootCauseEngine, V2/system-bus API, `weaknetctl`, lab, persistence replacement, Python, or AI behavior.
+Later work added native netlink topology, SocketTracker/TCP semantics,
+ActiveProbe, nl80211 Wi-Fi evidence, IncidentEngine, RootCauseEngine, D-Bus V2,
+`weaknetctl`, WeakNet Lab and optional AI/RAG. This document remains the
+technical record for the internal data-plane foundation.

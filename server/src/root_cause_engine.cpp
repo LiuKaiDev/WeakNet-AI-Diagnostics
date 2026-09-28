@@ -794,7 +794,7 @@ RootCauseEngine::buildCandidatesLocked() const {
 
         // Wi-Fi is a refinement of an already observed path problem. A signal
         // threshold alone never opens this candidate, and confidence is
-        // intentionally capped at Medium in this stage.
+        // Conservative Wi-Fi evidence is intentionally capped at Medium.
         const bool wifi_not_associated = wifi.meaning == WifiMeaning::NotAssociated;
         const bool wifi_weak = wifi.entry && wifi.meaning == WifiMeaning::Associated &&
             (wifi.entry->signal_category == WifiSignalCategory::Weak ||

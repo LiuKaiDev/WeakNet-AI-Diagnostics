@@ -317,7 +317,7 @@ if(BUILD_TESTING)
     add_subdirectory(tests)
 endif()
 
-message(STATUS "WeakNet Phase 1 configuration")
+message(STATUS "WeakNet configuration")
 message(STATUS "  C++ standard: C++20")
 message(STATUS "  ENABLE_EBPF: ${ENABLE_EBPF}")
 message(STATUS "  BUILD_TESTING: ${BUILD_TESTING}")

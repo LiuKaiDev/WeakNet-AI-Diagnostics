@@ -1,5 +1,9 @@
 # Phase 5.1–5.4 socket identity, inventory, metrics, and modeled route context
 
+> Historical implementation note. IncidentEngine, RootCauseEngine, D-Bus V2,
+> `weaknetctl`, ActiveProbe, Wi-Fi evidence and optional AI/RAG were implemented
+> after the socket-tracking increments documented here.
+
 ## Phase 5.1 scope
 
 Phase 5.1 defines the in-process V2 data model used by future socket
@@ -180,12 +184,14 @@ metadata; it is intentionally not encoded as fake numeric MetricStore series.
 This remains a modeled explanation, not guaranteed kernel forwarding.  Linux
 `ip rule`/RPDB policy, fwmarks, source-policy routing, VRFs, and custom table
 selection are not reproduced; such tables carry policy-limitation evidence.
-Loopback/local routes are represented as non-uplink where modeled.  No
-IncidentEngine, RootCauseEngine, D-Bus V2, process attribution, eBPF
-correlation, or other Phase 6+ functionality is part of this phase.
+Loopback/local routes are represented as non-uplink where modeled.
+IncidentEngine and RootCauseEngine consume these observations in the current
+runtime. Process/cgroup attribution and full eBPF correlation remain outside
+this modeled route-attribution component.
 
-## Deferred work
+## Remaining boundaries
 
-Later phases still cover process/cgroup attribution, eBPF correlation, packet
-capture, active-probe or Wi-Fi redesign, IncidentEngine, RootCauseEngine, V2
-D-Bus, weaknetctl, and V1 TCP migration.
+Process/cgroup attribution, packet capture, full Linux policy routing and
+broader eBPF correlation remain outside this component. Current deterministic
+diagnosis consumes the implemented socket/TCP/route observations without
+turning retransmission into packet-loss claims.
