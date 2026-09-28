@@ -1,0 +1,101 @@
+#pragma once
+
+#include <atomic>
+#include <memory>
+#include <stop_token>
+#include <thread>
+#include <vector>
+#include <string>
+#include <functional>
+
+#include <signal.h>
+
+#include "runtime_config.hpp"
+#include "runtime_health.hpp"
+#include "server.hpp"
+#include "event_bus.hpp"
+#include "metric_store.hpp"
+#include "v1_observation_adapter.hpp"
+#include "netlink_collector.hpp"
+#include "socket_tracker.hpp"
+#include "incident_engine.hpp"
+#include "root_cause_engine.hpp"
+#include "diagnostics_query.hpp"
+#include "active_probe.hpp"
+#include "wifi_collector.hpp"
+
+namespace weaknet_dbus {
+
+struct ApplicationTestHooks {
+    std::string fail_required_step;
+    std::string fail_optional_component;
+    bool seed_test_interface = false;
+    std::function<int(std::stop_token, const std::string&, const std::string&, int)>
+        ping_operation;
+    v2::NetlinkCollectorTestHooks netlink_collector;
+    v2::SocketTrackerTestHooks socket_tracker;
+    v2::WifiCollectorTestHooks wifi_collector;
+};
+
+class DaemonApplication {
+public:
+    explicit DaemonApplication(RuntimeConfig config = RuntimeConfig::fromEnvironment(),
+                               ApplicationTestHooks hooks = {});
+    ~DaemonApplication();
+
+    DaemonApplication(const DaemonApplication&) = delete;
+    DaemonApplication& operator=(const DaemonApplication&) = delete;
+
+    bool start();
+    int run();
+    void requestStop() noexcept;
+    void stop() noexcept;
+
+    bool running() const noexcept { return started_.load() && !stop_source_.stop_requested(); }
+    RuntimeHealth& health() noexcept { return health_; }
+    v2::EventBus& eventBus() noexcept { return event_bus_; }
+    v2::MetricStore& metricStore() noexcept { return metric_store_; }
+    v2::RootCauseEngine* rootCauseEngine() noexcept { return root_cause_engine_.get(); }
+
+private:
+    bool startSignalWaiter();
+    bool startDbus();
+    bool startWorkers();
+    void stopWorkers() noexcept;
+    void stopDbus() noexcept;
+    void restoreSignalMask() noexcept;
+
+    RuntimeConfig config_;
+    RuntimeHealth health_;
+    v2::SystemClock clock_;
+    v2::EventBus event_bus_{1024};
+    v2::MetricStore metric_store_{clock_};
+    std::unique_ptr<v2::V1ObservationAdapter> v2_adapter_;
+    std::unique_ptr<v2::NetlinkCollector> topology_collector_;
+    std::unique_ptr<v2::SocketTracker> socket_tracker_;
+    std::unique_ptr<v2::SocketRouteAttributor> socket_route_attributor_;
+    std::unique_ptr<v2::IncidentEngine> incident_engine_;
+    std::unique_ptr<v2::RootCauseEngine> root_cause_engine_;
+    std::unique_ptr<v2::DiagnosticsQueryService> diagnostics_query_;
+    std::unique_ptr<v2::ActiveProbe> active_probe_;
+    std::unique_ptr<v2::WifiCollector> wifi_collector_;
+    std::stop_source stop_source_;
+    std::atomic<bool> started_{false};
+    std::atomic<bool> stopped_{false};
+
+    ServerContext context_;
+    std::unique_ptr<WeakNetMgr> weak_mgr_;
+    std::unique_ptr<DbusService> service_;
+    std::vector<std::jthread> workers_;
+    std::jthread signal_thread_;
+
+    sigset_t signal_set_{};
+    sigset_t previous_signal_mask_{};
+    bool signal_mask_installed_ = false;
+    bool dbus_name_owned_ = false;
+    bool dbus_path_registered_ = false;
+    bool event_monitoring_started_ = false;
+    ApplicationTestHooks test_hooks_;
+};
+
+}  // namespace weaknet_dbus

@@ -1,0 +1,176 @@
+find_program(BASH_EXECUTABLE NAMES bash REQUIRED)
+
+function(weaknet_add_cpp_test target)
+    add_executable(${target} ${ARGN})
+    target_link_libraries(${target} PRIVATE weaknet_build_options)
+    add_test(NAME ${target} COMMAND ${target})
+endfunction()
+
+weaknet_add_cpp_test(serializer_roundtrip serializer_test.cpp)
+target_link_libraries(serializer_roundtrip PRIVATE weaknet_serialization)
+
+weaknet_add_cpp_test(ai_explanation_client ai_explanation_client_test.cpp
+    "${PROJECT_SOURCE_DIR}/client/ai_explanation_client.cpp")
+target_include_directories(ai_explanation_client PRIVATE "${PROJECT_SOURCE_DIR}/client")
+
+weaknet_add_cpp_test(network_quality_baseline network_quality_assessor_test.cpp)
+target_link_libraries(network_quality_baseline PRIVATE weaknet_quality PkgConfig::GLOG)
+
+weaknet_add_cpp_test(runtime_foundation runtime_foundation_test.cpp)
+target_link_libraries(runtime_foundation PRIVATE weaknet_runtime weaknet_server_core)
+
+weaknet_add_cpp_test(network_event_schema network_event_test.cpp)
+target_link_libraries(network_event_schema PRIVATE weaknet_data_plane)
+set_tests_properties(network_event_schema PROPERTIES LABELS "phase3")
+
+weaknet_add_cpp_test(socket_lifecycle socket_lifecycle_test.cpp)
+target_link_libraries(socket_lifecycle PRIVATE weaknet_data_plane)
+set_tests_properties(socket_lifecycle PROPERTIES LABELS "phase5.1")
+
+weaknet_add_cpp_test(socket_diag_parser socket_diag_parser_test.cpp)
+target_link_libraries(socket_diag_parser PRIVATE weaknet_data_plane)
+set_tests_properties(socket_diag_parser PROPERTIES LABELS "phase5.2")
+
+weaknet_add_cpp_test(tcp_metrics tcp_metrics_test.cpp)
+target_link_libraries(tcp_metrics PRIVATE weaknet_data_plane)
+set_tests_properties(tcp_metrics PROPERTIES LABELS "phase5.3")
+
+weaknet_add_cpp_test(socket_route_attribution socket_route_attribution_test.cpp)
+target_link_libraries(socket_route_attribution PRIVATE weaknet_data_plane)
+set_tests_properties(socket_route_attribution PROPERTIES LABELS "phase5.4")
+
+weaknet_add_cpp_test(incident_engine incident_engine_test.cpp)
+target_link_libraries(incident_engine PRIVATE weaknet_data_plane)
+set_tests_properties(incident_engine PROPERTIES LABELS "phase8")
+
+weaknet_add_cpp_test(root_cause_engine root_cause_engine_test.cpp)
+target_link_libraries(root_cause_engine PRIVATE weaknet_data_plane)
+set_tests_properties(root_cause_engine PROPERTIES LABELS "phase9")
+
+weaknet_add_cpp_test(diagnostics_query diagnostics_query_test.cpp)
+target_link_libraries(diagnostics_query PRIVATE weaknet_data_plane weaknet_server_core)
+set_tests_properties(diagnostics_query PROPERTIES LABELS "phase10")
+
+weaknet_add_cpp_test(active_probe active_probe_test.cpp)
+target_link_libraries(active_probe PRIVATE weaknet_data_plane)
+set_tests_properties(active_probe PROPERTIES LABELS "phase11")
+
+weaknet_add_cpp_test(wifi_nl80211 wifi_nl80211_test.cpp)
+target_link_libraries(wifi_nl80211 PRIVATE weaknet_data_plane)
+set_tests_properties(wifi_nl80211 PROPERTIES LABELS "phase7")
+
+weaknet_add_cpp_test(event_bus_concurrency event_bus_test.cpp)
+target_link_libraries(event_bus_concurrency PRIVATE weaknet_data_plane Threads::Threads)
+set_tests_properties(event_bus_concurrency PROPERTIES LABELS "phase3;concurrency")
+
+weaknet_add_cpp_test(metric_store_semantics metric_store_test.cpp)
+target_link_libraries(metric_store_semantics PRIVATE weaknet_data_plane Threads::Threads)
+set_tests_properties(metric_store_semantics PROPERTIES LABELS "phase3;concurrency")
+
+weaknet_add_cpp_test(v1_observation_adapter v1_observation_adapter_test.cpp)
+target_link_libraries(v1_observation_adapter PRIVATE weaknet_data_plane)
+set_tests_properties(v1_observation_adapter PROPERTIES LABELS "phase3;compatibility")
+
+weaknet_add_cpp_test(netlink_topology netlink_topology_test.cpp)
+target_link_libraries(netlink_topology PRIVATE weaknet_data_plane weaknet_server_core)
+set_tests_properties(netlink_topology PROPERTIES LABELS "phase4")
+
+weaknet_add_cpp_test(netlink_namespace_integration netlink_namespace_integration_test.cpp)
+target_link_libraries(netlink_namespace_integration PRIVATE weaknet_data_plane)
+set_tests_properties(netlink_namespace_integration PROPERTIES
+    LABELS "phase4;integration"
+    SKIP_RETURN_CODE 77
+    TIMEOUT 15)
+
+weaknet_add_cpp_test(ping_executor_lifecycle ping_executor_test.cpp)
+target_link_libraries(ping_executor_lifecycle PRIVATE weaknet_server_core)
+
+add_executable(ping_helper_fixture ping_helper_fixture.cpp)
+target_link_libraries(ping_helper_fixture PRIVATE weaknet_build_options Threads::Threads)
+
+add_executable(ping_helper_lifecycle ping_helper_lifecycle_test.cpp)
+target_link_libraries(ping_helper_lifecycle PRIVATE weaknet_server_core)
+add_test(NAME ping_helper_lifecycle
+    COMMAND $<TARGET_FILE:ping_helper_lifecycle> $<TARGET_FILE:ping_helper_fixture>)
+set_tests_properties(ping_helper_lifecycle PROPERTIES LABELS "phase2")
+
+add_executable(test_daemon_fixture test_daemon_fixture.cpp)
+target_link_libraries(test_daemon_fixture PRIVATE weaknet_server_core)
+
+add_executable(application_lifecycle application_lifecycle_test.cpp)
+target_link_libraries(application_lifecycle PRIVATE weaknet_server_core)
+
+add_executable(daemon_process_lifecycle daemon_process_test.cpp)
+target_link_libraries(daemon_process_lifecycle PRIVATE weaknet_build_options PkgConfig::DBUS)
+
+add_executable(client_lifetime client_lifetime_test.cpp)
+target_link_libraries(client_lifetime PRIVATE
+    weaknet_build_options weaknet_client Threads::Threads)
+set_target_properties(client_lifetime PROPERTIES BUILD_RPATH "$ORIGIN/../lib")
+
+find_program(DBUS_RUN_SESSION_EXECUTABLE NAMES dbus-run-session REQUIRED)
+add_test(NAME application_lifecycle
+    COMMAND "${DBUS_RUN_SESSION_EXECUTABLE}" -- $<TARGET_FILE:application_lifecycle>)
+set_tests_properties(application_lifecycle PROPERTIES TIMEOUT 45 LABELS "phase2;process")
+
+add_test(NAME daemon_process_lifecycle
+    COMMAND "${DBUS_RUN_SESSION_EXECUTABLE}" --
+        $<TARGET_FILE:daemon_process_lifecycle>
+        $<TARGET_FILE:weaknet-dbus-server>
+        $<TARGET_FILE:test_daemon_fixture>)
+set_tests_properties(daemon_process_lifecycle PROPERTIES TIMEOUT 45 LABELS "phase2;process")
+
+add_test(NAME client_lifetime
+    COMMAND "${DBUS_RUN_SESSION_EXECUTABLE}" -- $<TARGET_FILE:client_lifetime>)
+set_tests_properties(client_lifetime PROPERTIES TIMEOUT 30 LABELS "phase2;client")
+
+add_executable(c_header_smoke c_header_smoke.c)
+target_include_directories(c_header_smoke PRIVATE "${PROJECT_SOURCE_DIR}/client")
+set_target_properties(c_header_smoke PROPERTIES
+    C_STANDARD 11
+    C_STANDARD_REQUIRED YES
+    C_EXTENSIONS NO
+)
+add_test(NAME c_header_smoke COMMAND c_header_smoke)
+add_test(NAME weaknetctl_help COMMAND $<TARGET_FILE:weaknetctl> --help)
+
+weaknet_add_cpp_test(cxx_header_smoke cxx_header_smoke.cpp)
+target_include_directories(cxx_header_smoke PRIVATE "${PROJECT_SOURCE_DIR}/client")
+
+weaknet_add_cpp_test(v1_client_metadata v1_client_metadata_test.cpp)
+target_link_libraries(v1_client_metadata PRIVATE weaknet_client)
+set_target_properties(v1_client_metadata PROPERTIES
+    BUILD_RPATH "$ORIGIN/../lib"
+)
+
+add_executable(v1_dbus_contract v1_dbus_contract_test.cpp)
+target_link_libraries(v1_dbus_contract PRIVATE weaknet_build_options)
+target_include_directories(v1_dbus_contract PRIVATE
+    "${PROJECT_SOURCE_DIR}/server/include")
+target_link_libraries(v1_dbus_contract PRIVATE PkgConfig::DBUS)
+add_test(NAME v1_dbus_contract_fixture
+    COMMAND v1_dbus_contract
+        "${CMAKE_CURRENT_SOURCE_DIR}/contracts/v1_dbus.contract")
+
+add_test(NAME v1_c_abi_contract
+    COMMAND "${CMAKE_COMMAND}"
+        "-DNM_EXECUTABLE:FILEPATH=${CMAKE_NM}"
+        "-DLIBRARY_PATH:FILEPATH=$<TARGET_FILE:weaknet_client>"
+        "-DEXPECTED_FILE:FILEPATH=${CMAKE_CURRENT_SOURCE_DIR}/contracts/v1_c_abi.symbols"
+        -P "${PROJECT_SOURCE_DIR}/cmake/CheckCAbi.cmake")
+
+add_test(NAME shell_install_syntax
+    COMMAND "${BASH_EXECUTABLE}" -n "${PROJECT_SOURCE_DIR}/install.sh")
+add_test(NAME shell_rag_install_syntax
+    COMMAND "${BASH_EXECUTABLE}" -n
+        "${PROJECT_SOURCE_DIR}/optional/experimental/log-analysis-tools/install_rag.sh")
+
+if(ENABLE_EBPF)
+    find_program(READELF_EXECUTABLE NAMES readelf REQUIRED)
+    add_test(NAME bpf_object_smoke
+        COMMAND "${CMAKE_COMMAND}"
+            "-DBPF_OBJECT:FILEPATH=${WEAKNET_BPF_OBJECT}"
+            "-DBPFTOOL_EXECUTABLE:FILEPATH=${WEAKNET_BPFTOOL_EXECUTABLE}"
+            "-DREADELF_EXECUTABLE:FILEPATH=${READELF_EXECUTABLE}"
+            -P "${PROJECT_SOURCE_DIR}/cmake/CheckBpfObject.cmake")
+endif()

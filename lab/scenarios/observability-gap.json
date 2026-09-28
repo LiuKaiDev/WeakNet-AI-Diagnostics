@@ -1,0 +1,19 @@
+{
+  "schema_version": "weaknet.lab.scenario.v1",
+  "scenario_id": "observability-gap",
+  "title": "Unavailable optional telemetry",
+  "purpose": "Show that the eBPF-OFF daemon and unavailable physical Wi-Fi telemetry remain degraded or unknown rather than becoming a fabricated healthy/root-cause result.",
+  "required_capabilities": ["linux", "ip", "tc", "netns", "cap_net_admin", "session_dbus", "weaknetd", "weaknetctl", "python_venv", "dbus_next"],
+  "workload": "none",
+  "fault": "none",
+  "fault_options": {},
+  "warmup_seconds": 3,
+  "observation_timeout_seconds": 5,
+  "expected_incidents": [],
+  "expected_hypothesis_types": [],
+  "allowed_hypothesis_types": [],
+  "allowed_statuses": ["Degraded", "Unknown"],
+  "recovery": false,
+  "recovery_timeout_seconds": 10,
+  "require_nonhealthy_status": true
+}

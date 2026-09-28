@@ -1,0 +1,19 @@
+{
+  "schema_version": "weaknet.lab.scenario.v1",
+  "scenario_id": "high-rtt",
+  "title": "Sustained TCP RTT degradation",
+  "purpose": "Apply 300 ms server-egress netem delay so real TCP_INFO RTT crosses the current 200 ms, two-interval activation rule.",
+  "required_capabilities": ["linux", "ip", "tc", "netns", "cap_net_admin", "session_dbus", "weaknetd", "weaknetctl", "python_venv", "dbus_next"],
+  "workload": "tcp-echo",
+  "fault": "netem-delay",
+  "fault_options": {"delay_ms": 300},
+  "warmup_seconds": 7,
+  "observation_timeout_seconds": 28,
+  "expected_incidents": ["HighTcpRtt"],
+  "expected_hypothesis_types": ["NetworkPathDegradation"],
+  "allowed_hypothesis_types": ["NetworkPathDegradation", "InsufficientEvidence", "RemoteOrUpstreamDegradation"],
+  "allowed_statuses": ["Degraded"],
+  "recovery": true,
+  "recovery_timeout_seconds": 20,
+  "require_nonhealthy_status": true
+}

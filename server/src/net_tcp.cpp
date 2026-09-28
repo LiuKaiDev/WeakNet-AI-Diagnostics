@@ -16,6 +16,7 @@
 #include <linux/inet_diag.h>
 #include <linux/rtnetlink.h>
 #include <netinet/tcp.h>
+#include "scoped_fd.hpp"
 
 std::once_flag TcpLossMonitor::s_onceFlag;
 std::shared_ptr<TcpLossMonitor> TcpLossMonitor::s_instance;
@@ -115,8 +116,10 @@ static int ifnameToIndex(const std::string& name) {
 
 static bool rtnlGetIfTxPackets(int ifindex, uint64_t& txPackets) {
     txPackets = 0;
-    int nl = socket(AF_NETLINK, SOCK_RAW, NETLINK_ROUTE);
-    if (nl < 0) return false;
+    weaknet_dbus::ScopedFd nl(socket(AF_NETLINK, SOCK_RAW, NETLINK_ROUTE));
+    if (!nl) return false;
+    timeval timeout{0, 500000};
+    setsockopt(nl.get(), SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
 
     struct {
         nlmsghdr nlh;
@@ -131,13 +134,12 @@ static bool rtnlGetIfTxPackets(int ifindex, uint64_t& txPackets) {
     sockaddr_nl nladdr{}; nladdr.nl_family = AF_NETLINK;
     iovec iov{ &req, sizeof(req) };
     msghdr msg{}; msg.msg_name = &nladdr; msg.msg_namelen = sizeof(nladdr); msg.msg_iov = &iov; msg.msg_iovlen = 1;
-    if (sendmsg(nl, &msg, 0) < 0) { close(nl); return false; }
+    if (sendmsg(nl.get(), &msg, 0) < 0) return false;
 
     std::vector<char> buf(16 * 1024);
     iov = { buf.data(), buf.size() };
     msghdr rmsg{}; rmsg.msg_name = &nladdr; rmsg.msg_namelen = sizeof(nladdr); rmsg.msg_iov = &iov; rmsg.msg_iovlen = 1;
-    ssize_t len = recvmsg(nl, &rmsg, 0);
-    close(nl);
+    ssize_t len = recvmsg(nl.get(), &rmsg, 0);
     if (len <= 0) return false;
 
     for (nlmsghdr* h = reinterpret_cast<nlmsghdr*>(buf.data()); NLMSG_OK(h, (unsigned)len); h = NLMSG_NEXT(h, len)) {
@@ -172,14 +174,15 @@ static bool diagSampleIfaceAll(const std::string& iface, uint64_t& segsOutApprox
     int ifidx = ifnameToIndex(iface);
     if (ifidx <= 0) return false;
 
-    int nl = socket(AF_NETLINK, SOCK_DGRAM, NETLINK_SOCK_DIAG);
-    if (nl < 0) return false;
+    weaknet_dbus::ScopedFd nl(socket(AF_NETLINK, SOCK_DGRAM, NETLINK_SOCK_DIAG));
+    if (!nl) return false;
+    timeval timeout{0, 500000};
+    setsockopt(nl.get(), SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
 
     uint64_t so4 = 0, si4 = 0, r4 = 0, so6 = 0, si6 = 0, r6 = 0;
-    bool ok4 = diagDumpFamilyIface(nl, AF_INET, ifidx, so4, si4, r4);
-    bool ok6 = diagDumpFamilyIface(nl, AF_INET6, ifidx, so6, si6, r6);
+    bool ok4 = diagDumpFamilyIface(nl.get(), AF_INET, ifidx, so4, si4, r4);
+    bool ok6 = diagDumpFamilyIface(nl.get(), AF_INET6, ifidx, so6, si6, r6);
 
-    close(nl);
     if (!(ok4 || ok6)) return false;
     segsOutApprox = so4 + so6;
     segsInApprox = si4 + si6;
@@ -194,12 +197,13 @@ static bool diagSampleIfaceAll(const std::string& iface, uint64_t& segsOutApprox
 
 bool TcpLossMonitor::sample(TcpStats& outStats) {
     // system-wide: 纯 netlink 近似统计
-    int nl = socket(AF_NETLINK, SOCK_DGRAM, NETLINK_SOCK_DIAG);
-    if (nl < 0) return false;
+    weaknet_dbus::ScopedFd nl(socket(AF_NETLINK, SOCK_DGRAM, NETLINK_SOCK_DIAG));
+    if (!nl) return false;
+    timeval timeout{0, 500000};
+    setsockopt(nl.get(), SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
     uint64_t so4 = 0, si4 = 0, r4 = 0, so6 = 0, si6 = 0, r6 = 0;
-    bool ok4 = diagDumpFamilyIface(nl, AF_INET, -1, so4, si4, r4);
-    bool ok6 = diagDumpFamilyIface(nl, AF_INET6, -1, so6, si6, r6);
-    close(nl);
+    bool ok4 = diagDumpFamilyIface(nl.get(), AF_INET, -1, so4, si4, r4);
+    bool ok6 = diagDumpFamilyIface(nl.get(), AF_INET6, -1, so6, si6, r6);
     if (!(ok4 || ok6)) return false;
     outStats.retransSegs = r4 + r6;
     outStats.outSegs = so4 + so6;  // 近似分母

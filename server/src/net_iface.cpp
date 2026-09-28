@@ -21,6 +21,7 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
+#include "scoped_fd.hpp"
 
 #ifndef IFF_LOWER_UP
 #define IFF_LOWER_UP 0x10000
@@ -93,12 +94,11 @@ public:
         sendGetRouteDump(AF_INET6);
         receiveDump();
         recomputeManagedInterfaces(false);
-        ::close(nlSocket_);
         return namesOfManaged();
     }
 
 private:
-    int nlSocket_ = -1;
+    weaknet_dbus::ScopedFd nlSocket_;
 
     std::unordered_map<int, std::string> ifindexToName_;
     std::unordered_set<int> upInterfaces_;
@@ -107,8 +107,8 @@ private:
     std::unordered_set<int> managedIfaces_; // up ∩ (v4默认网关 ∪ v6默认网关)
 
     void openSocket() {
-        nlSocket_ = socket(AF_NETLINK, SOCK_RAW, NETLINK_ROUTE);
-        if (nlSocket_ < 0) {
+        nlSocket_.reset(socket(AF_NETLINK, SOCK_RAW, NETLINK_ROUTE));
+        if (!nlSocket_) {
             throw std::runtime_error("socket(AF_NETLINK) 失败");
         }
 
@@ -116,11 +116,11 @@ private:
         addr.nl_family = AF_NETLINK;
         addr.nl_groups = RTMGRP_LINK | RTMGRP_IPV4_ROUTE | RTMGRP_IPV6_ROUTE;
 
-        if (bind(nlSocket_, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) < 0) {
+        if (bind(nlSocket_.get(), reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) < 0) {
             throw std::runtime_error("bind(AF_NETLINK) 失败");
         }
 
-        setNonBlocking(nlSocket_);
+        setNonBlocking(nlSocket_.get());
     }
 
 
@@ -147,7 +147,7 @@ private:
         msg.msg_iov = &iov;
         msg.msg_iovlen = 1;
 
-        if (sendmsg(nlSocket_, &msg, 0) < 0) {
+        if (sendmsg(nlSocket_.get(), &msg, 0) < 0) {
             throw std::runtime_error("sendmsg 失败");
         }
     }
@@ -166,7 +166,7 @@ private:
             msg.msg_iov = &iov;
             msg.msg_iovlen = 1;
 
-            ssize_t len = recvmsg(nlSocket_, &msg, 0);
+            ssize_t len = recvmsg(nlSocket_.get(), &msg, 0);
             if (len < 0) {
                 if (errno == EINTR) continue;
                 if (errno == EAGAIN || errno == EWOULDBLOCK) break;
@@ -196,7 +196,7 @@ private:
             msg.msg_iov = &iov;
             msg.msg_iovlen = 1;
 
-            ssize_t len = recvmsg(nlSocket_, &msg, 0);
+            ssize_t len = recvmsg(nlSocket_.get(), &msg, 0);
             if (len < 0) {
                 if (errno == EINTR) continue;
                 if (errno == EAGAIN || errno == EWOULDBLOCK) break;

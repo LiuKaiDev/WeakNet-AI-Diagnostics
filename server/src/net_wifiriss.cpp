@@ -11,6 +11,7 @@
 #include <cstdlib>
 #include <thread>
 #include <chrono>
+#include <utility>
 
 static bool pathExists(const std::string& p) {
     struct stat st{};
@@ -59,25 +60,32 @@ std::shared_ptr<WiFiRssiClient> WiFiRssiClient::getInstance() {
 
 WiFiRssiClient::WiFiRssiClient() = default;
 WiFiRssiClient::~WiFiRssiClient() {
-    if (sockfd_ != -1) {
-        close(sockfd_);
-        sockfd_ = -1;
-    }
+    disconnect();
+}
+
+void WiFiRssiClient::disconnect() noexcept {
+    sockfd_.reset();
     if (!localSockPath_.empty()) {
         unlink(localSockPath_.c_str());
+        localSockPath_.clear();
     }
+}
+
+void WiFiRssiClient::setRuntimeDirectory(std::string directory) {
+    runtimeDir_ = std::move(directory);
 }
 
 bool WiFiRssiClient::connect(const std::string& ifaceName, const std::string& ctrlDir) {
     std::cerr << "[wifi] connect: starting, iface=" << ifaceName << ", ctrlDir=" << ctrlDir << std::endl;
+    disconnect();
     iface_ = ifaceName;
 
-    sockfd_ = ::socket(AF_UNIX, SOCK_DGRAM, 0);
-    if (sockfd_ < 0) {
+    sockfd_.reset(::socket(AF_UNIX, SOCK_DGRAM, 0));
+    if (!sockfd_) {
         std::cerr << "[wifi] socket() failed" << std::endl;
         return false;
     }
-    std::cerr << "[wifi] connect: socket created, fd=" << sockfd_ << std::endl;
+    std::cerr << "[wifi] connect: socket created, fd=" << sockfd_.get() << std::endl;
     
     if (!bindLocal()) {
         std::cerr << "[wifi] connect: bindLocal() failed" << std::endl;
@@ -118,8 +126,7 @@ bool WiFiRssiClient::connect(const std::string& ifaceName, const std::string& ct
     }
 
     std::cerr << "[wifi] unable to connect to wpa_supplicant control socket for iface '" << iface_ << "' (auto-start may require root)" << std::endl;
-    close(sockfd_);
-    sockfd_ = -1;
+    sockfd_.reset();
     if (!localSockPath_.empty()) {
         unlink(localSockPath_.c_str());
         localSockPath_.clear();
@@ -131,15 +138,14 @@ bool WiFiRssiClient::bindLocal() {
     struct sockaddr_un local{};
     local.sun_family = AF_UNIX;
     char tmp[108]{};
-    std::snprintf(tmp, sizeof(tmp), "/tmp/wpa_ctrl_%d_%s", getpid(), iface_.c_str());
+    std::snprintf(tmp, sizeof(tmp), "%s/wpa_ctrl_%d_%s", runtimeDir_.c_str(), getpid(), iface_.c_str());
     localSockPath_ = tmp;
     std::strncpy(local.sun_path, localSockPath_.c_str(), sizeof(local.sun_path) - 1);
 
     unlink(local.sun_path);
-    if (::bind(sockfd_, reinterpret_cast<struct sockaddr*>(&local), sizeof(local)) < 0) {
+    if (::bind(sockfd_.get(), reinterpret_cast<struct sockaddr*>(&local), sizeof(local)) < 0) {
         std::cerr << "[wifi] bind() failed: " << local.sun_path << std::endl;
-        close(sockfd_);
-        sockfd_ = -1;
+        sockfd_.reset();
         return false;
     }
     return true;
@@ -159,19 +165,19 @@ bool WiFiRssiClient::connectRemote() {
     struct timeval tv;
     tv.tv_sec = 1;  // 1秒超时
     tv.tv_usec = 0;
-    if (::setsockopt(sockfd_, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv)) < 0) {
+    if (::setsockopt(sockfd_.get(), SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv)) < 0) {
         std::cerr << "[wifi] setsockopt() failed" << std::endl;
     }
 
-    if (::connect(sockfd_, reinterpret_cast<struct sockaddr*>(&dest), sizeof(dest)) < 0) {
+    if (::connect(sockfd_.get(), reinterpret_cast<struct sockaddr*>(&dest), sizeof(dest)) < 0) {
         return false;
     }
     return true;
 }
 
 std::string WiFiRssiClient::sendCommand(const std::string& cmd) {
-    if (sockfd_ == -1) return {};
-    if (::send(sockfd_, cmd.c_str(), cmd.size(), 0) < 0) {
+    if (!sockfd_) return {};
+    if (::send(sockfd_.get(), cmd.c_str(), cmd.size(), 0) < 0) {
         std::cerr << "[wifi] send() failed" << std::endl;
         return {};
     }
@@ -180,12 +186,12 @@ std::string WiFiRssiClient::sendCommand(const std::string& cmd) {
     struct timeval tv;
     tv.tv_sec = 1;  // 1秒超时
     tv.tv_usec = 0;
-    if (::setsockopt(sockfd_, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv)) < 0) {
+    if (::setsockopt(sockfd_.get(), SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv)) < 0) {
         std::cerr << "[wifi] setsockopt() failed" << std::endl;
     }
     
     char buf[4096];
-    ssize_t n = ::recv(sockfd_, buf, sizeof(buf) - 1, 0);
+    ssize_t n = ::recv(sockfd_.get(), buf, sizeof(buf) - 1, 0);
     if (n < 0) {
         if (errno == EAGAIN || errno == EWOULDBLOCK) {
             std::cerr << "[wifi] recv() timeout" << std::endl;

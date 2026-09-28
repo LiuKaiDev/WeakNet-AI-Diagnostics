@@ -4,13 +4,13 @@
 #pragma once
 
 #include <string>
+#include <stop_token>
 
 namespace weaknet_dbus {
 
-class ServerContext;
+struct ServerContext;
 
-void start_rssi_monitor_thread(ServerContext* ctx, const std::string& ctrlDir = "");
+void run_rssi_monitor(ServerContext* ctx, std::stop_token token,
+                      const std::string& ctrlDir = "");
 
 }  // namespace weaknet_dbus
-
-

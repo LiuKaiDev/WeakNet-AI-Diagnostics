@@ -1,0 +1,19 @@
+{
+  "schema_version": "weaknet.lab.scenario.v1",
+  "scenario_id": "uplink-unavailable",
+  "title": "Authoritative uplink removal and recovery",
+  "purpose": "Remove and restore only the lab client namespace default route to exercise real netlink uplink state and lifecycle recovery.",
+  "required_capabilities": ["linux", "ip", "tc", "netns", "cap_net_admin", "session_dbus", "weaknetd", "weaknetctl", "python_venv", "dbus_next"],
+  "workload": "none",
+  "fault": "remove-default-route",
+  "fault_options": {},
+  "warmup_seconds": 3,
+  "observation_timeout_seconds": 12,
+  "expected_incidents": ["UplinkUnavailable"],
+  "expected_hypothesis_types": ["UplinkAvailabilityProblem"],
+  "allowed_hypothesis_types": ["UplinkAvailabilityProblem"],
+  "allowed_statuses": ["Degraded"],
+  "recovery": true,
+  "recovery_timeout_seconds": 12,
+  "require_nonhealthy_status": true
+}

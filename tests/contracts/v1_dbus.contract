@@ -1,0 +1,14 @@
+# WeakNet V1 static session-bus contract.
+bus=com.example.WeakNet
+path=/com/example/WeakNet
+interface=com.example.WeakNet
+error=com.example.WeakNet.Error
+method=Get||s
+method=ListInterfaces||as
+method=GetInterfaces||as
+method=HealthCheck||s
+method=Ping|s|s
+signal=Changed|si
+signal=InterfaceChanged|si
+signal=ConnectionModeChanged|si
+signal=NetworkQualityChanged|ssi

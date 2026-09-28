@@ -9,12 +9,41 @@
 #include "traffic_analyzer.hpp"
 #include "logger.hpp"
 #include <algorithm>
+#if defined(__linux__)
+#include <linux/rtnetlink.h>
+#endif
 
 namespace weaknet_dbus {
 
 std::vector<NetInfo> WeakNetMgr::collectCurrentInterfaces() {
     LOG_INFO(LogModule::WEAK_MGR, "collectCurrentInterfaces begin");
     std::vector<NetInfo> result;
+    if (topology_collector_) {
+        const auto topology = topology_collector_->snapshot();
+        const auto selected = topology_collector_->selectedUplink();
+        std::vector<std::uint32_t> eligible;
+        for (const auto& route : topology.routes) {
+            if (!route.present || !route.isDefault() ||
+                (route.table != RT_TABLE_MAIN && route.table != RT_TABLE_DEFAULT)) continue;
+            if (route.output_ifindex) eligible.push_back(*route.output_ifindex);
+            for (const auto& hop : route.multipath) eligible.push_back(hop.ifindex);
+        }
+        std::sort(eligible.begin(), eligible.end());
+        eligible.erase(std::unique(eligible.begin(), eligible.end()), eligible.end());
+        for (const auto ifindex : eligible) {
+            const auto link = topology.links.find(ifindex);
+            if (link == topology.links.end() || !link->second.usable()) continue;
+            NetInfo info(link->second.interface.observed_name);
+            info.setDefaultRoute(true);
+            info.setType(NetType::Unknown);
+            info.setState(link->second.up() ? NetState::Up : NetState::Down);
+            info.setRttMs(-1);
+            info.setUsingNow(selected.interface && selected.interface->ifindex == ifindex);
+            result.push_back(std::move(info));
+        }
+        LOG_INFO(LogModule::WEAK_MGR, "collectCurrentInterfaces from NetlinkCollector: " << result.size());
+        return result;
+    }
     auto mgr = NetInterfaceManager::getInstance();
     auto names = mgr->getInternetInterfaces();
     result.reserve(names.size());
@@ -102,6 +131,18 @@ bool WeakNetMgr::updateWifiRssi(std::vector<NetInfo>& list, const std::string& c
 }
 
 bool WeakNetMgr::updateCurrentUsing(std::vector<NetInfo>& list, bool printLog, std::string* outIfName, uint32_t* outFlags) {
+    if (topology_collector_) {
+        const auto selected = topology_collector_->selectedUplink();
+        const std::string usingIf = selected.interface ? selected.interface->observed_name : std::string{};
+        bool changed = false;
+        for (auto& item : list) {
+            const bool should = selected.interface && item.ifName() == usingIf;
+            if (item.usingNow() != should) { item.setUsingNow(should); changed = true; }
+        }
+        if (outIfName) *outIfName = usingIf;
+        if (outFlags) *outFlags = selected.method_flags;
+        return changed;
+    }
     auto usingMgr = UsingInterfaceManager::getInstance();
     usingMgr->start();
     std::string usingIf = usingMgr->getCurrentInterface();
@@ -189,7 +230,11 @@ void WeakNetMgr::stopTrafficAnalysis() {
     }
 }
 
-bool WeakNetMgr::updateTrafficAnalysis(std::vector<NetInfo>& list) {
+void WeakNetMgr::requestTrafficAnalysisStop() noexcept {
+    if (traffic_analyzer_) traffic_analyzer_->requestStop();
+}
+
+bool WeakNetMgr::updateTrafficAnalysis(std::vector<NetInfo>& list, std::stop_token token) {
     if (!traffic_analyzer_ || !traffic_analyzer_->isRunning()) {
         return false;
     }
@@ -201,10 +246,10 @@ bool WeakNetMgr::updateTrafficAnalysis(std::vector<NetInfo>& list) {
         auto stats = traffic_analyzer_->getCurrentStats();
         
         // 获取Top流量连接
-        auto topFlows = traffic_analyzer_->getTopFlows(5, 10);
+        auto topFlows = traffic_analyzer_->getTopFlows(5, 10, token);
         
         // 检测异常流量
-        auto anomalies = traffic_analyzer_->detectAnomalies(5);
+        auto anomalies = traffic_analyzer_->detectAnomalies(5, token);
         
         // 更新当前上网网卡的流量信息
         for (auto& net : list) {
@@ -255,17 +300,31 @@ void WeakNetMgr::updateInterfaces(const std::vector<NetInfo>& new_interfaces) {
 }
 
 bool WeakNetMgr::updateRttAndStateSafe(const std::string& host, int timeoutMs) {
-    LOG_INFO(LogModule::WEAK_MGR, "updateRttAndStateSafe: acquiring lock");
+    auto sampled = getCurrentInterfaces();
+    const bool result = updateRttAndState(sampled, host, timeoutMs);
     std::lock_guard<std::mutex> lock(iface_mutex_);
-    LOG_INFO(LogModule::WEAK_MGR, "updateRttAndStateSafe: lock acquired, calling updateRttAndState");
-    bool result = updateRttAndState(current_interfaces_, host, timeoutMs);
-    LOG_INFO(LogModule::WEAK_MGR, "updateRttAndStateSafe: updateRttAndState completed, releasing lock");
+    for (auto& current : current_interfaces_) {
+        const auto match = std::find_if(sampled.begin(), sampled.end(),
+            [&current](const NetInfo& item) { return item.ifName() == current.ifName(); });
+        if (match == sampled.end()) continue;
+        current.setPrevRttMs(match->prevRttMs());
+        current.setRttMs(match->rttMs());
+        current.setQuality(match->quality());
+        current.setState(match->state());
+    }
     return result;
 }
 
 bool WeakNetMgr::updateWifiRssiSafe(const std::string& ctrlDir) {
+    auto sampled = getCurrentInterfaces();
+    const bool result = updateWifiRssi(sampled, ctrlDir);
     std::lock_guard<std::mutex> lock(iface_mutex_);
-    return updateWifiRssi(current_interfaces_, ctrlDir);
+    for (auto& current : current_interfaces_) {
+        const auto match = std::find_if(sampled.begin(), sampled.end(),
+            [&current](const NetInfo& item) { return item.ifName() == current.ifName(); });
+        if (match != sampled.end()) current.setRssiDbm(match->rssiDbm());
+    }
+    return result;
 }
 
 bool WeakNetMgr::updateTcpLossRateSafe(const std::string& iface_name, double loss_rate, const std::string& loss_level) {
@@ -273,9 +332,19 @@ bool WeakNetMgr::updateTcpLossRateSafe(const std::string& iface_name, double los
     return updateTcpLossRate(current_interfaces_, iface_name, loss_rate, loss_level);
 }
 
-bool WeakNetMgr::updateTrafficAnalysisSafe() {
+bool WeakNetMgr::updateTrafficAnalysisSafe(std::stop_token token) {
+    auto sampled = getCurrentInterfaces();
+    const bool result = updateTrafficAnalysis(sampled, token);
     std::lock_guard<std::mutex> lock(iface_mutex_);
-    return updateTrafficAnalysis(current_interfaces_);
+    for (auto& current : current_interfaces_) {
+        const auto match = std::find_if(sampled.begin(), sampled.end(),
+            [&current](const NetInfo& item) { return item.ifName() == current.ifName(); });
+        if (match != sampled.end()) {
+            current.setTrafficStats(match->trafficTotalBps(), match->trafficTotalPps(),
+                                    match->trafficActiveFlows());
+        }
+    }
+    return result;
 }
 
 bool WeakNetMgr::updateCurrentUsingSafe() {
@@ -284,5 +353,3 @@ bool WeakNetMgr::updateCurrentUsingSafe() {
 }
 
 }  // namespace weaknet_dbus
-
-

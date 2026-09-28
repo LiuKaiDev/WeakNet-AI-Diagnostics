@@ -1,5 +1,9 @@
 # Build outputs
 
+/build/
+/cmake-build-*/
+/compile_commands.json
+/install_manifest.txt
 server/bin/
 server/build/
 client/bin/
@@ -47,6 +51,7 @@ env/
 
 .env
 .env.*
+*.local
 
 # Editor / system files
 
@@ -57,3 +62,10 @@ env/
 # Optional generated data
 
 optional/experimental/log-analysis-tools/network_knowledge_vectorstore_local/
+/.weaknet-rag-index/
+/.models/
+/models/
+/ai/models/
+/.cache/
+lab/.state/
+lab/output/

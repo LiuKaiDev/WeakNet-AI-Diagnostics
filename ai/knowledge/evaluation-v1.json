@@ -1,0 +1,13 @@
+{
+  "schema_version": "weaknet.ai.rag-evaluation.v1",
+  "cases": [
+    {"case_id":"local-link-weak-wifi","hypothesis_type":"LocalLinkSuspected","supporting":["WifiSignalVeryWeak"],"missing":["WifiRfEvidenceUnavailable"],"tags":["root-cause","wifi","evidence"]},
+    {"case_id":"local-link-not-associated","hypothesis_type":"LocalLinkSuspected","supporting":["WifiNotAssociated"],"missing":["WifiEvidenceUnavailable"],"tags":["wifi","active-probe"]},
+    {"case_id":"remote-upstream","hypothesis_type":"RemoteOrUpstreamDegradation","supporting":["RemoteProbeHighRtt","GatewayProbeReachable"],"tags":["root-cause","active-probe"]},
+    {"case_id":"local-routing","hypothesis_type":"LocalRoutingProblem","supporting":["RouteAttributionAmbiguous"],"tags":["root-cause"]},
+    {"case_id":"uplink-availability","hypothesis_type":"UplinkAvailabilityProblem","supporting":["UplinkUnavailable"],"tags":["active-probe","evidence"]},
+    {"case_id":"tcp-rtt-retransmission","hypothesis_type":"RemoteOrUpstreamDegradation","supporting":["HighTcpRtt","TcpRetransmission"],"tags":["root-cause"]},
+    {"case_id":"insufficient-missing-probes","hypothesis_type":"InsufficientEvidence","missing":["GatewayProbeUnavailable","WifiEvidenceUnavailable"],"tags":["evidence","active-probe","wifi"]},
+    {"case_id":"contradictory-evidence","hypothesis_type":"LocalLinkSuspected","supporting":["WifiSignalVeryWeak"],"contradicting":["GatewayProbeReachable"],"tags":["root-cause","active-probe","wifi"]}
+  ]
+}

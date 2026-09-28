@@ -1,0 +1,16 @@
+weaknet_check_changes
+weaknet_check_events
+weaknet_check_network_quality
+weaknet_cleanup
+weaknet_get_build_info
+weaknet_get_event_types
+weaknet_get_from_file
+weaknet_get_interfaces
+weaknet_get_version
+weaknet_health_check
+weaknet_init
+weaknet_is_connected
+weaknet_ping_host
+weaknet_subscribe_event
+weaknet_subscribe_network_quality
+weaknet_unsubscribe_event

@@ -8,6 +8,10 @@
 #include <algorithm>
 #include <cstring>
 #include <iostream>
+#include <chrono>
+
+#include "stop_utils.hpp"
+#include "scoped_fd.hpp"
 
 #if defined(__linux__)
 #include <arpa/inet.h>
@@ -32,12 +36,11 @@ std::shared_ptr<UsingInterfaceManager> UsingInterfaceManager::getInstance() {
 }
 
 UsingInterfaceManager::UsingInterfaceManager() = default;
-UsingInterfaceManager::~UsingInterfaceManager() = default;
 
 struct UsingInterfaceManager::Impl {
 #if defined(__linux__)
-    int nlSocket = -1;
-    std::thread worker;
+    weaknet_dbus::ScopedFd nlSocket;
+    std::jthread worker;
     std::atomic<bool> running{false};
     std::unordered_map<int, std::string> ifindexToName;
     std::unordered_set<int> upIfaces;
@@ -51,15 +54,15 @@ struct UsingInterfaceManager::Impl {
     }
 
     void openSocket() {
-        nlSocket = socket(AF_NETLINK, SOCK_RAW, NETLINK_ROUTE);
-        if (nlSocket < 0) throw std::runtime_error("socket(AF_NETLINK) failed");
+        nlSocket.reset(socket(AF_NETLINK, SOCK_RAW, NETLINK_ROUTE));
+        if (!nlSocket) throw std::runtime_error("socket(AF_NETLINK) failed");
         sockaddr_nl addr{};
         addr.nl_family = AF_NETLINK;
         addr.nl_groups = RTMGRP_LINK | RTMGRP_IPV4_ROUTE | RTMGRP_IPV6_ROUTE;
-        if (bind(nlSocket, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) < 0) {
+        if (bind(nlSocket.get(), reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) < 0) {
             throw std::runtime_error("bind(AF_NETLINK) failed");
         }
-        setNonBlocking(nlSocket);
+        setNonBlocking(nlSocket.get());
     }
 
     void sendReq(uint16_t type, uint16_t flags, uint8_t family) {
@@ -73,7 +76,7 @@ struct UsingInterfaceManager::Impl {
         sockaddr_nl nladdr{}; nladdr.nl_family = AF_NETLINK;
         struct iovec iov{ &req, sizeof(req) };
         struct msghdr msg{}; msg.msg_name = &nladdr; msg.msg_namelen = sizeof(nladdr); msg.msg_iov = &iov; msg.msg_iovlen = 1;
-        if (sendmsg(nlSocket, &msg, 0) < 0) throw std::runtime_error("sendmsg failed");
+        if (sendmsg(nlSocket.get(), &msg, 0) < 0) throw std::runtime_error("sendmsg failed");
     }
 
     void dumpInitial() {
@@ -159,7 +162,7 @@ struct UsingInterfaceManager::Impl {
             sockaddr_nl nladdr{};
             struct iovec iov{ buf.data(), buf.size() };
             struct msghdr msg{}; msg.msg_name = &nladdr; msg.msg_namelen = sizeof(nladdr); msg.msg_iov = &iov; msg.msg_iovlen = 1;
-            ssize_t len = recvmsg(nlSocket, &msg, 0);
+            ssize_t len = recvmsg(nlSocket.get(), &msg, 0);
             if (len < 0) {
                 if (errno == EINTR) continue;
                 if (errno == EAGAIN || errno == EWOULDBLOCK) break;
@@ -206,22 +209,24 @@ struct UsingInterfaceManager::Impl {
         }
     }
 
-    void eventLoop(UsingInterfaceManager* owner) {
+    void eventLoop(UsingInterfaceManager* owner, std::stop_token token) {
         try {
             openSocket();
             dumpInitial();
             // 发布一次初始状态，避免刚启动阶段为空
             publishState(owner, /*printLog=*/true);
             std::vector<char> buf(64 * 1024);
-            running.store(true);
-            while (running.load()) {
+            while (running.load() && !token.stop_requested()) {
                 sockaddr_nl nladdr{};
                 struct iovec iov{ buf.data(), buf.size() };
                 struct msghdr msg{}; msg.msg_name = &nladdr; msg.msg_namelen = sizeof(nladdr); msg.msg_iov = &iov; msg.msg_iovlen = 1;
-                ssize_t len = recvmsg(nlSocket, &msg, 0);
+                ssize_t len = recvmsg(nlSocket.get(), &msg, 0);
                 if (len < 0) {
                     if (errno == EINTR) continue;
-                    if (errno == EAGAIN || errno == EWOULDBLOCK) { usleep(1000 * 50); continue; }
+                    if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                        if (weaknet_dbus::waitForStop(token, std::chrono::milliseconds(50))) break;
+                        continue;
+                    }
                     throw std::runtime_error("recvmsg failed");
                 }
                 if (len == 0) continue;
@@ -238,25 +243,48 @@ struct UsingInterfaceManager::Impl {
         } catch (const std::exception& ex) {
             std::cerr << "[net] loop error: " << ex.what() << std::endl;
         }
-        if (nlSocket >= 0) close(nlSocket);
-        nlSocket = -1;
+        nlSocket.reset();
         running.store(false);
     }
 #else
-    void eventLoop(UsingInterfaceManager*) {}
+    void eventLoop(UsingInterfaceManager*, std::stop_token) {}
 #endif
 };
+
+UsingInterfaceManager::~UsingInterfaceManager() {
+    stop();
+    delete impl_;
+    impl_ = nullptr;
+}
 
 void UsingInterfaceManager::start() {
 #if defined(__linux__)
     std::lock_guard<std::mutex> lk(stateMutex_);
     if (impl_ == nullptr) impl_ = new Impl();
     if (!impl_->running.load()) {
-        impl_->worker = std::thread([this]{ impl_->eventLoop(this); });
-        impl_->worker.detach();
+        if (impl_->worker.joinable()) impl_->worker.join();
+        impl_->running.store(true);
+        impl_->worker = std::jthread([this](std::stop_token token) {
+            impl_->eventLoop(this, token);
+        });
     }
 #else
     (void)stateMutex_;
+#endif
+}
+
+void UsingInterfaceManager::stop() {
+#if defined(__linux__)
+    Impl* implementation = nullptr;
+    {
+        std::lock_guard<std::mutex> lock(stateMutex_);
+        implementation = impl_;
+        if (implementation) implementation->running.store(false);
+    }
+    if (implementation && implementation->worker.joinable()) {
+        implementation->worker.request_stop();
+        implementation->worker.join();
+    }
 #endif
 }
 

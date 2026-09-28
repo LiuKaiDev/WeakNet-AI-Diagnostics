@@ -63,22 +63,28 @@ install_dependencies() {
             sudo apt-get update
             sudo apt-get install -y \
                 build-essential \
+                cmake \
+                ninja-build \
                 clang \
                 llvm \
                 pkg-config \
                 libdbus-1-dev \
-                libglog-dev \
+                libgoogle-glog-dev \
                 libelf-dev \
                 zlib1g-dev \
                 libcap-dev \
                 linux-headers-$(uname -r) \
-                libbpf-dev
+                libbpf-dev \
+                linux-tools-common \
+                linux-tools-generic
             ;;
         "CentOS Linux"|"Red Hat Enterprise Linux")
             sudo yum groupinstall -y "Development Tools"
             sudo yum install -y \
                 clang \
                 llvm \
+                cmake \
+                ninja-build \
                 pkgconfig \
                 dbus-devel \
                 glog-devel \
@@ -86,13 +92,16 @@ install_dependencies() {
                 zlib-devel \
                 libcap-devel \
                 kernel-devel-$(uname -r) \
-                libbpf-devel
+                libbpf-devel \
+                bpftool
             ;;
         "Fedora")
             sudo dnf groupinstall -y "Development Tools"
             sudo dnf install -y \
                 clang \
                 llvm \
+                cmake \
+                ninja-build \
                 pkgconfig \
                 dbus-devel \
                 glog-devel \
@@ -100,12 +109,14 @@ install_dependencies() {
                 zlib-devel \
                 libcap-devel \
                 kernel-devel-$(uname -r) \
-                libbpf-devel
+                libbpf-devel \
+                bpftool
             ;;
         *)
             print_warning "未识别的操作系统: $OS"
             print_info "请手动安装以下依赖:"
             print_info "  - build-essential (或 Development Tools)"
+            print_info "  - cmake, ninja"
             print_info "  - clang, llvm"
             print_info "  - pkg-config"
             print_info "  - libdbus-1-dev (或 dbus-devel)"
@@ -115,6 +126,7 @@ install_dependencies() {
             print_info "  - libcap-dev (或 libcap-devel)"
             print_info "  - linux-headers-$(uname -r) (或 kernel-devel)"
             print_info "  - libbpf-dev (或 libbpf-devel)"
+            print_info "  - bpftool (ENABLE_EBPF=ON 且未提供 WEAKNET_VMLINUX_HEADER 时)"
             read -p "是否继续编译? (y/N): " -n 1 -r
             echo
             if [[ ! $REPLY =~ ^[Yy]$ ]]; then
@@ -129,50 +141,92 @@ install_dependencies() {
 # 检查依赖
 check_dependencies() {
     print_info "检查编译依赖..."
-    
+
     local missing_deps=()
-    
-    # 检查编译器
+
+    # Phase 1 always-required build tools.
     if ! command -v g++ &> /dev/null; then
         missing_deps+=("g++")
     fi
-    
-    if ! command -v clang &> /dev/null; then
-        missing_deps+=("clang")
+    if ! command -v cmake &> /dev/null; then
+        missing_deps+=("cmake")
     fi
-    
-    # 检查pkg-config
+    if ! command -v ninja &> /dev/null; then
+        missing_deps+=("ninja")
+    fi
     if ! command -v pkg-config &> /dev/null; then
         missing_deps+=("pkg-config")
+    else
+        if ! pkg-config --exists dbus-1; then
+            missing_deps+=("dbus-1 development files")
+        fi
+        if ! pkg-config --exists libglog; then
+            missing_deps+=("glog development files")
+        fi
+
+        if [ "${ENABLE_EBPF:-ON}" = "ON" ]; then
+            for package in libbpf libelf zlib; do
+                if ! pkg-config --exists "$package"; then
+                    missing_deps+=("$package development files")
+                fi
+            done
+        fi
     fi
-    
-    # 检查库文件
-    if ! pkg-config --exists dbus-1; then
-        missing_deps+=("libdbus-1-dev")
+
+    if [ "${ENABLE_EBPF:-ON}" = "ON" ]; then
+        if ! command -v clang &> /dev/null; then
+            missing_deps+=("clang")
+        elif ! clang -print-targets 2>/dev/null | grep -qE '^[[:space:]]*bpf[[:space:]]'; then
+            missing_deps+=("clang BPF backend")
+        fi
+
+        if [ -n "${WEAKNET_VMLINUX_HEADER:-}" ]; then
+            if [ ! -r "$WEAKNET_VMLINUX_HEADER" ]; then
+                missing_deps+=("readable WEAKNET_VMLINUX_HEADER")
+            fi
+        else
+            if ! command -v bpftool &> /dev/null; then
+                missing_deps+=("bpftool")
+            fi
+            if [ ! -r "${WEAKNET_VMLINUX_BTF:-/sys/kernel/btf/vmlinux}" ]; then
+                missing_deps+=("readable kernel BTF")
+            fi
+        fi
     fi
-    
-    if ! pkg-config --exists libglog; then
-        missing_deps+=("libglog-dev")
-    fi
-    
+
     if [ ${#missing_deps[@]} -ne 0 ]; then
         print_error "缺少以下依赖: ${missing_deps[*]}"
         print_info "请运行: $0 --install-deps"
         exit 1
     fi
-    
+
+    print_info "ENABLE_EBPF=${ENABLE_EBPF:-ON}"
     print_success "所有依赖检查通过"
 }
 
 # 编译项目
 build_project() {
     print_info "编译WEAK_NET项目..."
-    
-    # 清理之前的编译产物
-    make clean 2>/dev/null || true
-    
-    # 编译
-    if make all; then
+
+    local build_dir="build/install"
+    local cmake_args=(
+        -S .
+        -B "$build_dir"
+        -G Ninja
+        -DCMAKE_BUILD_TYPE=RelWithDebInfo
+        -DENABLE_EBPF="${ENABLE_EBPF:-ON}"
+        -DBUILD_TESTING=ON
+    )
+    if [ -n "${WEAKNET_VMLINUX_HEADER:-}" ]; then
+        cmake_args+=("-DWEAKNET_VMLINUX_HEADER=$WEAKNET_VMLINUX_HEADER")
+    fi
+    if [ -n "${WEAKNET_VMLINUX_BTF:-}" ]; then
+        cmake_args+=("-DWEAKNET_VMLINUX_BTF=$WEAKNET_VMLINUX_BTF")
+    fi
+
+    cmake "${cmake_args[@]}"
+    if cmake --build "$build_dir" --parallel &&
+       cmake --build "$build_dir" --target weaknet_legacy_stage --parallel; then
         print_success "编译成功"
     else
         print_error "编译失败"
@@ -182,32 +236,14 @@ build_project() {
 
 # 运行测试
 run_tests() {
-    print_info "运行基本测试..."
-    
-    # 检查服务器是否已运行
-    if pgrep -f weaknet-dbus-server > /dev/null; then
-        print_warning "检测到服务器已在运行，跳过测试"
-        return 0
-    fi
-    
-    # 启动服务器进行测试
-    print_info "启动服务器进行测试..."
-    ./server/bin/weaknet-dbus-server &
-    local server_pid=$!
-    
-    # 等待服务器启动
-    sleep 3
-    
-    # 运行客户端测试
-    if make test-client COMMAND=get; then
-        print_success "基本功能测试通过"
+    print_info "运行Phase 1确定性测试..."
+
+    if ctest --test-dir build/install --output-on-failure; then
+        print_success "Phase 1测试通过"
     else
-        print_warning "基本功能测试失败"
+        print_error "Phase 1测试失败"
+        exit 1
     fi
-    
-    # 停止服务器
-    kill $server_pid 2>/dev/null || true
-    sleep 1
 }
 
 # 创建启动脚本
@@ -285,6 +321,11 @@ main() {
         check_root
         detect_os
         install_dependencies
+        exit 0
+    fi
+
+    if [ "$1" = "--check-deps" ]; then
+        check_dependencies
         exit 0
     fi
     

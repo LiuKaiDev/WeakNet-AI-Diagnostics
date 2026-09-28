@@ -27,6 +27,7 @@ NetworkEventManager::NetworkEventManager()
 }
 
 void NetworkEventManager::registerCallback(EventType type, EventCallback callback) {
+    std::lock_guard lock(mutex_);
     switch (type) {
         case EventType::InterfaceChanged:
             interface_callbacks_.push_back(callback);
@@ -51,6 +52,7 @@ void NetworkEventManager::registerCallback(EventType type, EventCallback callbac
 }
 
 void NetworkEventManager::unregisterCallback(EventType type) {
+    std::lock_guard lock(mutex_);
     switch (type) {
         case EventType::InterfaceChanged:
             interface_callbacks_.clear();
@@ -92,20 +94,25 @@ void NetworkEventManager::emitEvent(const NetworkEvent& event) {
     
     invokeCallbacks(event.type, event);
     
+    ServerContext* context = nullptr;
+    {
+        std::lock_guard lock(mutex_);
+        context = monitoring_active_ ? server_ctx_ : nullptr;
+    }
     // 如果有DBus服务，发送信号
-    if (server_ctx_ && server_ctx_->service) {
+    if (context && context->service) {
         std::string signalName = getSignalName(event.type);
         std::string fullMessage = event.source.empty() 
             ? event.message 
             : "[" + event.source + "] " + event.message;
         
-        static int32_t eventCounter = 0;
+        const int32_t eventCounter = event_counter_.fetch_add(1);
         
         // 对于网络质量事件，发送包含详细信息的信号
         if (event.type == EventType::NetworkQualityChanged && !event.details.empty()) {
-            server_ctx_->service->emitNetworkQualitySignal(fullMessage, event.details, eventCounter++);
+            context->service->emitNetworkQualitySignal(fullMessage, event.details, eventCounter);
         } else {
-            server_ctx_->service->emitSpecificSignal(signalName, fullMessage, eventCounter++);
+            context->service->emitSpecificSignal(signalName, fullMessage, eventCounter);
         }
     }
 }
@@ -137,8 +144,11 @@ void NetworkEventManager::emitRssiChanged(const std::string& message, const std:
 }
 
 void NetworkEventManager::startEventMonitoring(struct ServerContext* ctx) {
-    server_ctx_ = ctx;
-    monitoring_active_ = true;
+    {
+        std::lock_guard lock(mutex_);
+        server_ctx_ = ctx;
+        monitoring_active_ = true;
+    }
     
     LOG_INFO(LogModule::EVENT_MGR, "event monitoring started");
     
@@ -153,43 +163,44 @@ void NetworkEventManager::startEventMonitoring(struct ServerContext* ctx) {
 }
 
 void NetworkEventManager::stopEventMonitoring() {
+    std::lock_guard lock(mutex_);
     monitoring_active_ = false;
+    server_ctx_ = nullptr;
+    interface_callbacks_.clear();
+    connection_mode_callbacks_.clear();
+    network_quality_callbacks_.clear();
+    tcp_loss_callbacks_.clear();
+    rtt_callbacks_.clear();
+    rssi_callbacks_.clear();
     LOG_INFO(LogModule::EVENT_MGR, "event monitoring stopped");
 }
 
 void NetworkEventManager::invokeCallbacks(EventType type, const NetworkEvent& event) {
+    std::vector<EventCallback> callbacks;
+    {
+        std::lock_guard lock(mutex_);
     switch (type) {
         case EventType::InterfaceChanged:
-            for (const auto& callback : interface_callbacks_) {
-                callback(event);
-            }
+            callbacks = interface_callbacks_;
             break;
         case EventType::ConnectionModeChanged:
-            for (const auto& callback : connection_mode_callbacks_) {
-                callback(event);
-            }
+            callbacks = connection_mode_callbacks_;
             break;
         case EventType::NetworkQualityChanged:
-            for (const auto& callback : network_quality_callbacks_) {
-                callback(event);
-            }
+            callbacks = network_quality_callbacks_;
             break;
         case EventType::TcpLossRateChanged:
-            for (const auto& callback : tcp_loss_callbacks_) {
-                callback(event);
-            }
+            callbacks = tcp_loss_callbacks_;
             break;
         case EventType::RttChanged:
-            for (const auto& callback : rtt_callbacks_) {
-                callback(event);
-            }
+            callbacks = rtt_callbacks_;
             break;
         case EventType::RssiChanged:
-            for (const auto& callback : rssi_callbacks_) {
-                callback(event);
-            }
+            callbacks = rssi_callbacks_;
             break;
     }
+    }
+    for (const auto& callback : callbacks) callback(event);
 }
 
 } // namespace weaknet_dbus

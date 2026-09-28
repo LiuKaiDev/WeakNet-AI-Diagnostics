@@ -3,10 +3,45 @@
 
 #include "traffic_analyzer.hpp"
 #include "logger.hpp"
+#include "weaknet/build_config.hpp"
 #include <chrono>
+#include <cstdlib>
+#include <filesystem>
 #include <thread>
+#include "stop_utils.hpp"
 
 namespace weaknet_dbus {
+
+namespace {
+
+std::string resolveBpfObjectPath() {
+    if (const char* overridePath = std::getenv("WEAKNET_BPF_OBJECT");
+        overridePath && overridePath[0] != '\0') {
+        return overridePath;
+    }
+
+    std::error_code error;
+    const auto executable = std::filesystem::read_symlink("/proc/self/exe", error);
+    if (!error) {
+        const auto prefix = executable.parent_path().parent_path();
+        const auto candidate = prefix / WEAKNET_BPF_RELATIVE_PATH;
+        if (std::filesystem::is_regular_file(candidate, error) && !error) {
+            return candidate.string();
+        }
+
+        // The temporary Make wrapper stages the daemon and BPF object under server/.
+        error.clear();
+        const auto legacyStaged = prefix / "build/flow_rate.bpf.o";
+        if (std::filesystem::is_regular_file(legacyStaged, error) && !error) {
+            return legacyStaged.string();
+        }
+        return candidate.string();
+    }
+
+    return {};
+}
+
+}  // namespace
 
 TrafficAnalyzer::TrafficAnalyzer() 
     : running_(false), interval_seconds_(10) {
@@ -26,8 +61,8 @@ void TrafficAnalyzer::start(const std::string& interface, int interval_seconds) 
     interface_ = interface;
     interval_seconds_ = interval_seconds;
     
-    // 设置eBPF对象路径。服务端从项目根目录启动时使用该相对路径。
-    analyzer_->setBpfObjectPath("server/build/flow_rate.bpf.o");
+    // Prefer the build/install layout while retaining the V1 source-tree fallback.
+    analyzer_->setBpfObjectPath(resolveBpfObjectPath());
     
     // 设置异常检测参数
     analyzer_->setAnomalyDetectionParams(
@@ -44,39 +79,41 @@ void TrafficAnalyzer::start(const std::string& interface, int interval_seconds) 
     }
     
     running_.store(true);
-    thread_ = std::make_unique<std::thread>(&TrafficAnalyzer::analyzeLoop, this);
+    thread_ = std::jthread([this](std::stop_token token) { analyzeLoop(token); });
     
     LOG_INFO(LogModule::WEAK_MGR, "Traffic analyzer started for interface: " << interface << " (interval=" << interval_seconds << "s)");
 }
 
 void TrafficAnalyzer::stop() {
-    if (!running_.load()) {
-        return;
-    }
-    
-    running_.store(false);
-    
-    if (thread_ && thread_->joinable()) {
-        thread_->join();
+    requestStop();
+    if (thread_.joinable()) {
+        thread_.request_stop();
+        thread_.join();
     }
     
     // 清理历史数据
     analyzer_->clearHistory();
+    analyzer_->shutdown();
     
     LOG_INFO(LogModule::WEAK_MGR, "Traffic analyzer stopped");
 }
 
-void TrafficAnalyzer::analyzeLoop() {
+void TrafficAnalyzer::requestStop() noexcept {
+    running_.store(false);
+    thread_.request_stop();
+}
+
+void TrafficAnalyzer::analyzeLoop(std::stop_token token) {
     LOG_INFO(LogModule::WEAK_MGR, "Traffic analysis loop started");
     
-    while (running_.load()) {
+    while (running_.load() && !token.stop_requested()) {
         try {
             // 获取实时统计（如果eBPF可用）
             NetTrafficAnalyzer::RealTimeStats stats;
             bool hasStats = false;
             
             try {
-                stats = analyzer_->getRealTimeStats();
+                stats = analyzer_->getRealTimeStats(token);
                 hasStats = true;
                 
                 // 更新缓存
@@ -91,7 +128,8 @@ void TrafficAnalyzer::analyzeLoop() {
             // 检测异常流量（如果eBPF可用）
             if (hasStats) {
                 try {
-                    auto anomalies = analyzer_->detectAnomalies(5);
+                    auto anomalies = analyzer_->detectAnomalies(5, 5 * 1024 * 1024,
+                        20 * 1024 * 1024, 2.5, token);
                     if (!anomalies.empty()) {
                         LOG_INFO(LogModule::WEAK_MGR, "Detected " << anomalies.size() << " traffic anomalies");
                         for (const auto& anomaly : anomalies) {
@@ -114,7 +152,7 @@ void TrafficAnalyzer::analyzeLoop() {
                     
                 // 获取Top流量连接并记录
                 try {
-                    auto topFlows = analyzer_->sampleTopFlows(5, 5);
+                    auto topFlows = analyzer_->sampleTopFlows(5, 5, token);
                     if (!topFlows.empty()) {
                         LOG_INFO(LogModule::WEAK_MGR, "TOP_FLOWS: ");
                         for (size_t i = 0; i < std::min(topFlows.size(), size_t(3)); ++i) {
@@ -138,7 +176,7 @@ void TrafficAnalyzer::analyzeLoop() {
         
         // 等待下一个分析周期
         for (int i = 0; i < interval_seconds_ && running_.load(); ++i) {
-            std::this_thread::sleep_for(std::chrono::seconds(1));
+            if (waitForStop(token, std::chrono::seconds(1))) break;
         }
     }
     
@@ -150,12 +188,15 @@ NetTrafficAnalyzer::RealTimeStats TrafficAnalyzer::getCurrentStats() const {
     return cached_stats_;
 }
 
-std::vector<FlowRate> TrafficAnalyzer::getTopFlows(int sample_seconds, int top_count) const {
-    return analyzer_->sampleTopFlows(sample_seconds, top_count);
+std::vector<FlowRate> TrafficAnalyzer::getTopFlows(
+    int sample_seconds, int top_count, std::stop_token token) const {
+    return analyzer_->sampleTopFlows(sample_seconds, top_count, token);
 }
 
-std::vector<TrafficAnomaly> TrafficAnalyzer::detectAnomalies(int detection_seconds) const {
-    return analyzer_->detectAnomalies(detection_seconds);
+std::vector<TrafficAnomaly> TrafficAnalyzer::detectAnomalies(
+    int detection_seconds, std::stop_token token) const {
+    return analyzer_->detectAnomalies(detection_seconds, 10 * 1024 * 1024,
+        50 * 1024 * 1024, 3.0, token);
 }
 
 std::map<std::string, TrafficHistory> TrafficAnalyzer::getTrafficHistory() const {
