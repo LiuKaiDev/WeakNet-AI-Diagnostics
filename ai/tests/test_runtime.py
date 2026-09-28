@@ -41,6 +41,31 @@ class RuntimeServiceTests(unittest.TestCase):
         self.assertEqual(rag_status, 200)
         self.assertTrue(rag["bm25_available"])
         self.assertFalse(rag["hybrid_ready"])
+        self.assertTrue(rag["corpus_available"])
+
+    def test_current_advice_uses_injected_diagnosis_source(self):
+        app = AiExplanationApplication.from_env(
+            {"WEAKNET_LLM_PROVIDER": "fake"}, diagnosis_source=_Source(local_link_suspected())
+        )
+        status, body = app.handle("POST", "/v2/advice/current", b"{}")
+        self.assertEqual(status, 200)
+        self.assertEqual(body["hypotheses"][0]["type"], "LocalLinkSuspected")
+        self.assertEqual(body["retrieval_mode"], "lexical")
+
+    def test_current_advice_without_hypotheses_is_not_applicable(self):
+        payload = local_link_suspected().to_dict()
+        payload["status"] = "Unknown"
+        payload["incidents"] = []
+        payload["hypotheses"] = []
+        snapshot = type(local_link_suspected()).from_dict(payload)
+        app = AiExplanationApplication.from_env(
+            {"WEAKNET_LLM_PROVIDER": "fake"}, diagnosis_source=_Source(snapshot)
+        )
+        status, body = app.handle("POST", "/v2/advice/current", b"{}")
+        self.assertEqual(status, 200)
+        self.assertEqual(body["status"], "not_applicable")
+        self.assertEqual(body["retrieval_mode"], "none")
+        self.assertIsNone(body["error"])
 
     def test_dashscope_without_key_stays_live_but_explanation_is_explicit(self):
         app = AiExplanationApplication.from_env(

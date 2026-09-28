@@ -33,7 +33,7 @@ class HybridRetriever:
         lexical_ms = (perf_counter() - started) * 1000
         dense: list[RetrievalHit] = []
         dense_ms = 0.0
-        if self.embedding_model is not None and self.vector_index is not None:
+        if self.embedding_model is not None and self.vector_index is not None and self.reranker is not None:
             started = perf_counter()
             vector = self.embedding_model.embed([query.search_text])[0]
             for chunk, score, rank in self.vector_index.search(vector, self.config.dense_top_k):
@@ -45,7 +45,7 @@ class HybridRetriever:
         if self.reranker is not None and fused:
             started = perf_counter(); fused = self.reranker.rerank(query.search_text, fused[:self.config.fusion_top_k]); rerank_ms = (perf_counter() - started) * 1000
         hits = fused[:self.config.final_top_k]
-        mode = "hybrid" if dense else "bm25"
+        mode = "hybrid" if dense and self.vector_index is not None and self.reranker is not None else "lexical"
         return RetrievalBundle(query=query, corpus_version=self.corpus_version, retrieval_mode=mode,
             embedding_model=getattr(self.embedding_model, "model_name", None), reranker_model=getattr(self.reranker, "model_name", None),
             hits=hits, status="ok" if hits else "empty", timing_ms={"bm25": lexical_ms, "dense": dense_ms, "reranker": rerank_ms})

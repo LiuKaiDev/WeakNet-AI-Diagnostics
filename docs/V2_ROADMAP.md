@@ -486,7 +486,8 @@ framework, and opt-in real `DashScopeProvider`; this stage adds the optional
 loopback service, real D-Bus V2 diagnosis source, and explicit
 `weaknetctl diagnose --explain` path. Normal tests use the deterministic fake
 provider; live requests require explicit provider selection, an opt-in flag,
-and `DASHSCOPE_API_KEY`. No RAG, embeddings, or agent behavior is implemented.
+and `DASHSCOPE_API_KEY`. In that completed V2.2 milestone, no RAG, embeddings,
+or agent behavior was implemented.
 The C++ diagnosis remains authoritative.
 
 AI V2.3A is implemented as a separate retrieval-only increment under
@@ -500,6 +501,13 @@ authoritative uplink availability, and supports explicit local BGE model paths
 with offline-only loading. The real BGE smoke remains environment-gated: model
 weights are never committed and require an available trusted cache or model
 source.
+
+AI V2.3B adds the explicit grounded RAG advisor. It consumes RetrievalBundle
+plus DiagnosisSnapshot, performs dual diagnosis/citation grounding, and
+exposes `/v2/advice` plus `weaknetctl diagnose --advise`. Lexical mode is
+truthfully labeled `lexical`; hybrid mode requires real dense/reranker
+capabilities. Existing explanations remain unchanged, and no agent or
+remediation is included.
 
 Objective: provide a read-only advisory explanation product after the
 deterministic core and export schema are stable.

@@ -153,6 +153,17 @@ std::string text(const JsonObject& value, const char* key, bool required = true)
     if (!result || (required && result->empty())) throw std::runtime_error("invalid report field");
     return *result;
 }
+std::vector<std::string> strings(const JsonObject& value, const char* key) {
+    const auto it = value.find(key);
+    if (it == value.end()) return {};
+    std::vector<std::string> result;
+    for (const auto& item : array(it->second)) {
+        auto* item_text = std::get_if<std::string>(&item.value);
+        if (!item_text || item_text->empty()) throw std::runtime_error("invalid report string list");
+        result.push_back(*item_text);
+    }
+    return result;
+}
 bool boolean(const JsonObject& value, const char* key) {
     const auto it = value.find(key); if (it == value.end()) throw std::runtime_error("missing report boolean");
     auto* result = std::get_if<bool>(&it->second.value); if (!result) throw std::runtime_error("invalid report boolean"); return *result;
@@ -179,6 +190,66 @@ ExplanationResult parseReport(const JsonObject& root) {
         report.limitations.push_back(std::move(explanation));
     }
     return ExplanationResult{true, std::move(report), {}, {}};
+}
+
+AdviceResult parseAdviceReport(const JsonObject& root) {
+    if (text(root, "schema_version") != "weaknet.ai.rag-advice.v1") throw std::runtime_error("unsupported advice schema");
+    const auto status = text(root, "status", false);
+    if (status == "not_applicable") {
+        AdviceReport report;
+        report.status = status;
+        report.provider = text(root, "provider"); report.model = text(root, "model");
+        report.deterministic_status = text(root, "deterministic_status");
+        report.retrieval_mode = text(root, "retrieval_mode"); report.summary = text(root, "summary");
+        if (report.retrieval_mode != "none") throw std::runtime_error("invalid not-applicable retrieval mode");
+        return {true, std::move(report), {}, {}};
+    }
+    if (!status.empty() && status != "validated") {
+        const auto error = root.find("error");
+        if (error != root.end()) {
+            const auto& details = object(error->second);
+            return {false, {}, text(details, "category", false), text(details, "message", false)};
+        }
+        return {false, {}, "RagAdvisorUnavailable", "RAG advice is unavailable"};
+    }
+    AdviceReport report;
+    report.status = status.empty() ? "validated" : status;
+    report.provider = text(root, "provider"); report.model = text(root, "model");
+    report.deterministic_status = text(root, "deterministic_status");
+    report.retrieval_mode = text(root, "retrieval_mode"); report.summary = text(root, "summary");
+    if (report.retrieval_mode != "lexical" && report.retrieval_mode != "hybrid") throw std::runtime_error("invalid retrieval mode");
+    std::map<std::string, std::string> citation_labels;
+    const auto cited = root.find("cited_knowledge");
+    if (cited != root.end()) {
+        for (const auto& item : array(cited->second)) {
+            const auto& value = object(item);
+            const auto id = text(value, "citation_id");
+            citation_labels[id] = text(value, "title", false) + " — " + text(value, "source", false) + " [" + id + "]";
+        }
+    }
+    for (const auto& item : array(root.at("recommended_checks"))) {
+        const auto& value = object(item);
+        AdviceCheck check{text(value, "text"), strings(value, "citation_ids"), {}};
+        for (const auto& id : check.citation_ids) {
+            const auto label = citation_labels.find(id);
+            check.citation_labels.push_back(label == citation_labels.end() ? id : label->second);
+        }
+        report.recommended_checks.push_back(std::move(check));
+    }
+    for (const auto& item : array(root.at("knowledge_explanations"))) {
+        const auto& value = object(item);
+        AdviceCheck explanation{text(value, "text"), strings(value, "citation_ids"), {}};
+        for (const auto& id : explanation.citation_ids) {
+            const auto label = citation_labels.find(id);
+            explanation.citation_labels.push_back(label == citation_labels.end() ? id : label->second);
+        }
+        report.knowledge_explanations.push_back(std::move(explanation));
+    }
+    for (const auto& item : array(root.at("limitations"))) {
+        const auto& value = object(item);
+        report.limitations.push_back(text(value, "text"));
+    }
+    return AdviceResult{true, std::move(report), {}, {}};
 }
 
 std::int64_t nowMs() {
@@ -288,6 +359,61 @@ ExplanationResult ExplanationClient::explainCurrent() const {
     int status = 0;
     try { status = std::stoi(response.substr(first_space + 1, line_end - first_space - 1)); } catch (...) { return {false, {}, "AiServiceError", "AI service returned an invalid HTTP status"}; }
     return parseResponse(status, response.substr(body_start + 4));
+}
+
+AdviceResult ExplanationClient::adviseCurrent() const {
+    if (config_.host != "127.0.0.1" && config_.host != "localhost" && config_.host != "::1")
+        return {false, {}, "AiServiceUnavailable", "AI service must use a loopback address"};
+    const std::int64_t deadline = nowMs() + config_.timeout_ms;
+    addrinfo hints{}; hints.ai_socktype = SOCK_STREAM; hints.ai_family = AF_UNSPEC;
+    addrinfo* addresses = nullptr;
+    const std::string port = std::to_string(config_.port);
+    if (::getaddrinfo(config_.host.c_str(), port.c_str(), &hints, &addresses) != 0)
+        return {false, {}, "AiServiceUnavailable", "AI service is unavailable"};
+    int fd = -1;
+    for (addrinfo* address = addresses; address; address = address->ai_next) {
+        fd = ::socket(address->ai_family, address->ai_socktype, address->ai_protocol);
+        if (fd < 0) continue;
+        const int flags = ::fcntl(fd, F_GETFL, 0); if (flags >= 0) ::fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+        const int result = ::connect(fd, address->ai_addr, address->ai_addrlen);
+        if (result == 0) break;
+        if (result < 0 && errno == EINPROGRESS && waitFd(fd, POLLOUT, deadline)) {
+            int socket_error = 0; socklen_t size = sizeof(socket_error);
+            if (::getsockopt(fd, SOL_SOCKET, SO_ERROR, &socket_error, &size) == 0 && socket_error == 0) break;
+        }
+        ::close(fd); fd = -1;
+    }
+    ::freeaddrinfo(addresses);
+    if (fd < 0) return {false, {}, "AiServiceUnavailable", "AI service is unavailable"};
+    const std::string request = "POST /v2/advice/current HTTP/1.1\r\nHost: " + config_.host + "\r\nContent-Type: application/json\r\nConnection: close\r\nContent-Length: 2\r\n\r\n{}";
+    if (sendAll(fd, request, deadline) != IoStatus::Success) { ::close(fd); return {false, {}, "AiServiceUnavailable", "AI service request failed"}; }
+    std::string response; char buffer[4096];
+    while (response.size() <= 1024 * 1024 && waitFd(fd, POLLIN, deadline)) {
+        const ssize_t count = ::recv(fd, buffer, sizeof(buffer), 0);
+        if (count == 0) break;
+        if (count < 0) {
+            if (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK) continue;
+            break;
+        }
+        response.append(buffer, static_cast<std::size_t>(count));
+    }
+    ::close(fd);
+    try {
+        const auto line_end = response.find("\r\n"); const auto body_start = response.find("\r\n\r\n");
+        if (line_end == std::string::npos || body_start == std::string::npos) throw std::runtime_error("invalid HTTP response");
+        const auto first_space = response.find(' '); const int status = std::stoi(response.substr(first_space + 1, line_end - first_space - 1));
+        const auto root = object(JsonReader(response.substr(body_start + 4)).parse());
+        if (status < 200 || status >= 300) return {false, {}, "AiServiceError", "RAG advice request failed"};
+        return parseAdviceReport(root);
+    } catch (...) { return {false, {}, "InvalidProviderOutput", "AI service returned an invalid advice report"}; }
+}
+
+AdviceResult ExplanationClient::parseAdviceResponse(int status_code, const std::string& body) {
+    try {
+        const auto root = object(JsonReader(body).parse());
+        if (status_code < 200 || status_code >= 300) return {false, {}, "AiServiceError", "RAG advice request failed"};
+        return parseAdviceReport(root);
+    } catch (...) { return {false, {}, "InvalidProviderOutput", "AI service returned an invalid advice report"}; }
 }
 
 }  // namespace weaknet_ai

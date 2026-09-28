@@ -9,6 +9,7 @@ from typing import Any, Optional
 from .base import LlmProviderResult, LlmRequest
 from ..schemas.diagnosis import DiagnosisSnapshot
 from ..schemas.explanation import EXPLANATION_SCHEMA_VERSION
+from ..schemas.advice import RAG_ADVICE_SCHEMA_VERSION
 
 
 class FakeLlmProvider:
@@ -28,7 +29,20 @@ class FakeLlmProvider:
             payload = deepcopy(self.response)
         else:
             snapshot = request.snapshot
-            if not isinstance(snapshot, DiagnosisSnapshot):
+            if request.response_schema_version == RAG_ADVICE_SCHEMA_VERSION and isinstance(snapshot, DiagnosisSnapshot):
+                citations = []
+                raw = request.metadata.get("retrieval_bundle", {}) if isinstance(request.metadata, dict) else {}
+                if isinstance(raw, dict):
+                    citations = [item.get("citation_id") for item in raw.get("hits", []) if isinstance(item, dict) and item.get("citation_id")]
+                citation = citations[0] if citations else None
+                knowledge = [{"text": "Retrieved knowledge is advisory and does not establish a new diagnosis.", "citation_ids": [citation]}] if citation else []
+                payload = {"schema_version": RAG_ADVICE_SCHEMA_VERSION,
+                           "summary": "The deterministic diagnosis remains authoritative; retrieved knowledge provides bounded next checks.",
+                           "knowledge_explanations": knowledge,
+                           "recommended_checks": ([{"text": "Collect the missing evidence before attributing a cause.", "citation_ids": [citation],
+                                                    "related_missing_evidence_ids": [e.evidence_id for h in snapshot.hypotheses for e in h.missing_evidence]}] if citation else []),
+                           "limitations": [{"text": "Missing evidence remains unresolved.", "evidence_ids": [e.evidence_id for h in snapshot.hypotheses for e in h.missing_evidence], "citation_ids": []}]}
+            elif not isinstance(snapshot, DiagnosisSnapshot):
                 # The service supplies a snapshot in metadata.  A missing one
                 # is deliberately malformed rather than an invented report.
                 payload = {"schema_version": EXPLANATION_SCHEMA_VERSION}

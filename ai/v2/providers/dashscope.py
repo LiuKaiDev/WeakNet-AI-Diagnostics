@@ -344,6 +344,12 @@ class DashScopeProvider:
         ``GroundingValidator`` still enforce every ID, role, and limitation.
         """
         if "schema_version" in payload:
+            # This adapter normalization belongs only to the original
+            # explanation contract. Other versioned structured products (such
+            # as RAG advice) are validated by their own strict schema and must
+            # pass through without field rewriting.
+            if payload.get("schema_version") != EXPLANATION_SCHEMA_VERSION:
+                return payload
             # Qwen may add descriptive metadata to evidence/limitation items
             # even when it uses the requested top-level schema.  Preserve only
             # the fields accepted by the existing strict contract; unknown

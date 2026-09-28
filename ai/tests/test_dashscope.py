@@ -178,6 +178,17 @@ class DashScopeProviderTests(unittest.TestCase):
         self.assertEqual(report.hypotheses[0].type, hypothesis.type)
         self.assertEqual(report.hypotheses[0].confidence, hypothesis.confidence)
 
+    def test_non_explanation_versioned_payload_passes_through_unchanged(self):
+        from ai.v2.schemas.advice import RAG_ADVICE_SCHEMA_VERSION
+        payload = {
+            "schema_version": RAG_ADVICE_SCHEMA_VERSION,
+            "summary": "bounded",
+            "knowledge_explanations": [],
+            "recommended_checks": [],
+            "limitations": [{"text": "missing RF", "evidence_ids": ["e"], "citation_ids": []}],
+        }
+        self.assertEqual(DashScopeProvider._normalize_qwen_explanation(payload), payload)
+
     def test_capabilities_do_not_claim_reachability(self):
         without_key = provider_capabilities({})
         with_key = provider_capabilities({"DASHSCOPE_API_KEY": "k", "WEAKNET_LLM_MODEL": "qwen-test"})

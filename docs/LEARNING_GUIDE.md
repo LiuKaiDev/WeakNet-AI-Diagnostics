@@ -378,6 +378,13 @@ adapts requests to the transport-neutral explainer. Finally read
 `weaknetctl diagnose` remains entirely deterministic; only `--explain` crosses
 the optional process boundary.
 
+AI V2.3B adds a distinct `--advise` path. Follow
+`ai/v2/services/advisor.py`, `ai/v2/prompts/rag_advisor.py`,
+`ai/v2/schemas/advice.py`, and `ai/v2/validation/citations.py` to see the
+RetrievalBundle-to-provider boundary, bounded untrusted knowledge context,
+stable citation grounding, and authoritative diagnosis copied into the final
+report. The standard `--explain` path remains separate and unchanged.
+
 ### AI V2.3A retrieval
 
 After the explanation path, read `ai/v2/rag/query_planner.py` and

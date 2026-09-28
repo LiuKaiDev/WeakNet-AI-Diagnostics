@@ -30,6 +30,40 @@ Chunking is Markdown-section aware, paragraph preserving, bounded by
 `max_chars`, and uses bounded overlap only for long paragraphs. Ordering is
 stable.
 
+## V2.3B grounded advisor
+
+The separate `RagAdvisorService` consumes a typed `RetrievalBundle` and a
+`DiagnosisSnapshot`, then calls the existing replaceable `LlmProvider` through
+`RagAdvisorPromptBuilder`. It does not perform corpus searches inside prompt
+construction. The provider contract is `weaknet.ai.rag-advice.v1` and permits
+only a summary, cited knowledge explanations, cited read-only recommended
+checks, and limitations. Root-cause, diagnosis, confidence, incident, and
+evidence-role fields are rejected as provider fields; authoritative hypothesis
+type/confidence/roles are copied from the snapshot into `RagAdviceReport`.
+
+`CitationGroundingValidator` requires every knowledge explanation and check to
+cite an exact `document_id/chunk_id@source_version` identity present in the
+current bundle. It rejects invented, malformed, positional, or wrong-bundle
+citations, missing-evidence relationship violations, obvious authority
+escalation, and claims that an action was executed. This is a conservative
+support boundary: citation presence does not prove full semantic entailment,
+so obvious overclaims are rejected and deeper semantic judging is deferred.
+
+The advisor prompt separates `<diagnosis_data>` from
+`<retrieved_knowledge>` and treats knowledge as untrusted DATA. Context is
+bounded by chunk count, per-chunk characters, total characters, and a small
+document-diversity pass. Lexical-only retrieval is reported as `lexical`;
+`hybrid` is emitted only when every bundle has dense retrieval.
+
+`POST /v2/advice` and `POST /v2/advice/current` are additive read-only endpoints.
+The existing `/v2/explanations` behavior is unchanged. `weaknetctl diagnose
+--advise` is an explicit product mode and prints deterministic diagnosis first,
+then advice, citations, limitations, and retrieval mode. No commands are
+executed and no remediation is implemented. A RAG/provider failure remains
+isolated from deterministic diagnosis and normal evidence explanation.
+An empty hypothesis set produces the non-error `not_applicable` report state
+before retrieval or provider execution; it is not reported as RAG unavailable.
+
 The curated root-cause coverage matrix is:
 
 | Root-cause type | Corpus coverage |
@@ -98,11 +132,15 @@ The read-only `GET /v2/rag/capabilities` endpoint reports capability state
 without loading models. RAG errors never break deterministic diagnosis or
 non-RAG Qwen explanations.
 
-## Evaluation and next stage
+## Evaluation and live validation
 
 `ai/v2/rag/evaluation.py` provides Recall@K, reciprocal rank/MRR, hit/miss, and
 stage-separated result aggregation. Offline tests use fake embeddings, indexes,
 and rerankers; a real local BGE/FAISS/reranker smoke is explicit and must be
-reported separately as `RAG LIVE PASS`, `RAG LIVE FAIL`, or `RAG LIVE SKIP`. No
-DashScope call is part of this stage. AI V2.3B may later pass a retrieval bundle
-to Qwen with exact citation IDs; V2.3A intentionally does not.
+reported separately as `RAG LIVE PASS`, `RAG LIVE FAIL`, or `RAG LIVE SKIP`.
+AI V2.3B has an explicit opt-in Qwen lexical-advisor test guarded by
+`WEAKNET_RUN_LIVE_RAG_ADVISOR=1`, DashScope provider selection, and configured
+credentials. It uses actual local-corpus BM25 retrieval and exact citations;
+when BGE is unavailable it must report `RAG ADVISOR LIVE PASS (LEXICAL)`, never
+a hybrid pass. Real hybrid must be revalidated once BGE embedding and reranker
+weights are available.

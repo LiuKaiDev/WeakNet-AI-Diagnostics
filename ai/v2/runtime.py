@@ -21,10 +21,18 @@ from .services.explainer import EvidenceExplainerService
 from .sources.base import DiagnosisSource
 from .sources.dbus import DbusDiagnosisSource
 from .rag.capabilities import capabilities as rag_capabilities
+from .services.advisor import RagAdvisorService
+from .rag.knowledge import CorpusManifest, default_manifest_path
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8765
 MAX_REQUEST_BYTES = 256 * 1024
+
+
+class _UnavailableLlmProvider:
+    """Preserves retrieval when explicit provider configuration is unavailable."""
+    async def generate(self, request: Any) -> Any:
+        raise ProviderUnavailable("configured AI provider is unavailable")
 
 
 def _public_error(error: BaseException) -> tuple[str, str]:
@@ -57,6 +65,7 @@ class AiExplanationApplication:
     selected_provider: str
     provider_error: AiLayerError | None = None
     environ: Mapping[str, str] | None = None
+    advisor: RagAdvisorService | None = None
 
     @classmethod
     def from_env(
@@ -65,10 +74,10 @@ class AiExplanationApplication:
     ) -> "AiExplanationApplication":
         values = os.environ if environ is None else environ
         selected = values.get("WEAKNET_LLM_PROVIDER", "fake").strip().lower()
+        provider = None
         try:
-            explainer = EvidenceExplainerService(
-                create_llm_provider(selected, environ=values)
-            )
+            provider = create_llm_provider(selected, environ=values)
+            explainer = EvidenceExplainerService(provider)
             provider_error = None
         except AiLayerError as exc:
             # The service remains live so health/capabilities can explain why
@@ -81,12 +90,15 @@ class AiExplanationApplication:
             selected_provider=selected,
             provider_error=provider_error,
             environ=values,
+            advisor=RagAdvisorService(provider or _UnavailableLlmProvider()),
         )
 
     def capabilities(self) -> dict[str, Any]:
         result = provider_capabilities(self.environ)
         result["selected_provider"] = self.selected_provider
         result["explanations_available"] = self.explainer is not None
+        result["rag_advice_available"] = self.advisor is not None and self.provider_error is None
+        result["rag_retrieval_mode"] = "lexical"
         result["diagnosis_source"] = "dbus-v2"
         if self.provider_error is not None:
             category, message = _public_error(self.provider_error)
@@ -95,7 +107,13 @@ class AiExplanationApplication:
 
     def rag_capabilities(self) -> dict[str, Any]:
         """Report optional retrieval availability without loading models."""
-        return rag_capabilities().to_dict()
+        try:
+            path = default_manifest_path()
+            CorpusManifest.load(path)
+            corpus_available = True
+        except Exception:
+            corpus_available = False
+        return rag_capabilities(corpus_available=corpus_available).to_dict()
 
     async def explain(self, snapshot: DiagnosisSnapshot, request_id: str = "") -> dict[str, Any]:
         if self.explainer is None:
@@ -105,6 +123,15 @@ class AiExplanationApplication:
     async def explain_current(self, request_id: str = "") -> dict[str, Any]:
         snapshot = await self.diagnosis_source.current()
         return await self.explain(snapshot, request_id)
+
+    async def advise(self, snapshot: DiagnosisSnapshot, request_id: str = "") -> dict[str, Any]:
+        if self.advisor is None:
+            raise ProviderUnavailable("RAG advisor is unavailable")
+        return (await self.advisor.advise(snapshot, request_id=request_id)).to_dict()
+
+    async def advise_current(self, request_id: str = "") -> dict[str, Any]:
+        snapshot = await self.diagnosis_source.current()
+        return await self.advise(snapshot, request_id)
 
     def handle(self, method: str, path: str, body: bytes = b"") -> tuple[int, dict[str, Any]]:
         try:
@@ -127,6 +154,19 @@ class AiExplanationApplication:
                         raise DiagnosisValidationError("request body must be an object")
                     request_id = str(request.get("request_id", ""))
                 return 200, asyncio.run(self.explain_current(request_id))
+            if method == "POST" and path == "/v2/advice":
+                payload = json.loads(body.decode("utf-8"))
+                snapshot = DiagnosisSnapshot.from_dict(payload)
+                request_id = str(payload.get("request_id", "")) if isinstance(payload, dict) else ""
+                return 200, asyncio.run(self.advise(snapshot, request_id))
+            if method == "POST" and path == "/v2/advice/current":
+                request_id = ""
+                if body and body.strip() not in (b"", b"{}"):
+                    request = json.loads(body.decode("utf-8"))
+                    if not isinstance(request, dict):
+                        raise DiagnosisValidationError("request body must be an object")
+                    request_id = str(request.get("request_id", ""))
+                return 200, asyncio.run(self.advise_current(request_id))
             return 404, {"error": {"category": "NotFound", "message": "endpoint not found"}}
         except InputTooLarge as exc:
             category, message = _public_error(exc)

@@ -1,0 +1,9 @@
+{
+  "schema_version": "weaknet.ai.rag-advisor-evaluation.v1",
+  "cases": [
+    {"case_id":"local-link-weak-wifi","hypothesis_type":"LocalLinkSuspected","required_uncertainty":["interference not confirmed"],"forbidden_overclaims":["interference confirmed","root cause is interference"],"expected_citation_tags":["wifi","evidence"],"missing_targets":["WifiRfEvidenceUnavailable"]},
+    {"case_id":"remote-upstream","hypothesis_type":"RemoteOrUpstreamDegradation","required_uncertainty":["not confirmed ISP failure"],"forbidden_overclaims":["ISP outage confirmed","remote server confirmed"],"expected_citation_tags":["active-probe","root-cause"],"missing_targets":[]},
+    {"case_id":"insufficient-missing-probes","hypothesis_type":"InsufficientEvidence","required_uncertainty":["observations missing","cause unresolved"],"forbidden_overclaims":["failure confirmed","root cause confirmed"],"expected_citation_tags":["active-probe","evidence"],"missing_targets":["GatewayProbeUnavailable","WifiEvidenceUnavailable"]},
+    {"case_id":"contradictory-evidence","hypothesis_type":"LocalLinkSuspected","required_uncertainty":["contradiction preserved"],"forbidden_overclaims":["contradiction ignored","confirmed interference"],"expected_citation_tags":["active-probe","wifi"],"missing_targets":[]}
+  ]
+}

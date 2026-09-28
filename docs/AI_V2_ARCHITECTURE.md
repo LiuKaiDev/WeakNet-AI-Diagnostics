@@ -6,7 +6,7 @@ deterministic C++ diagnosis pipeline:
 ```text
 Linux observations -> IncidentEngine -> RootCauseEngine
     -> DiagnosticsQueryService -> DiagnosisSnapshot -> AI V2 explanation
-    -> RetrievalQuery -> optional hybrid retrieval (not yet sent to Qwen)
+    -> RetrievalQuery -> optional hybrid retrieval -> grounded advisor (explicit mode)
 ```
 
 The C++ engines remain authoritative. AI V2 cannot create incidents, invent a
@@ -128,9 +128,16 @@ installed, compatible, and ready states. The additive
 `GET /v2/rag/capabilities` endpoint is read-only. Retrieval failure cannot
 affect deterministic diagnosis or the existing explanation endpoint.
 
-This stage deliberately stops at `RetrievalBundle`: no retrieval context is
-passed to Qwen, and no troubleshooting generator, agent, shell execution, or
-remediation is implemented. Those are AI V2.3B concerns.
+AI V2.3A deliberately stopped at `RetrievalBundle`. AI V2.3B now adds the
+separate grounded advisor below. No agent, shell execution, or remediation is
+implemented.
+
+AI V2.3B adds an explicit grounded-advisor mode after retrieval. Advice is
+validated twice: the existing diagnosis grounding contract remains mandatory,
+and `CitationGroundingValidator` verifies stable knowledge citations. Advice
+cannot replace deterministic root-cause type/confidence or promote missing
+evidence. It is available through `/v2/advice` and `weaknetctl diagnose
+--advise`; `/v2/explanations` and `--explain` retain their prior behavior.
 
 ## Runtime product path
 
@@ -139,8 +146,10 @@ loopback-only HTTP adapter around `EvidenceExplainerService`:
 
 - `GET /health/live` is provider-independent liveness;
 - `GET /v2/capabilities` reports selection and configuration truthfully;
+- `GET /v2/rag/capabilities` reports optional retrieval state;
 - `POST /v2/explanations` accepts a canonical `DiagnosisSnapshot`;
-- `POST /v2/explanations/current` obtains the snapshot through D-Bus V2.
+- `POST /v2/explanations/current` obtains the snapshot through D-Bus V2;
+- `POST /v2/advice` and `/v2/advice/current` provide separate grounded advice.
 
 The C++ CLI calls only the explicit `--explain` path and uses a bounded
 localhost request. A missing DashScope key leaves the service live but makes

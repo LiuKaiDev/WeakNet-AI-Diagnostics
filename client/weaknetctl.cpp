@@ -172,7 +172,7 @@ int statusExit(const Dict& status) {
 }
 
 void usage() {
-    std::cout << "Usage: weaknetctl <status|incidents|hypotheses|diagnose [--explain]>\n";
+    std::cout << "Usage: weaknetctl <status|incidents|hypotheses|diagnose [--explain|--advise]>\n";
 }
 
 }  // namespace
@@ -184,8 +184,9 @@ int main(int argc, char** argv) {
     }
     const std::string command = argv[1];
     const bool explain = argc == 3 && std::string(argv[2]) == "--explain";
+    const bool advise = argc == 3 && std::string(argv[2]) == "--advise";
     if ((command != "status" && command != "incidents" && command != "hypotheses" && command != "diagnose") ||
-        (argc == 3 && (!explain || command != "diagnose"))) {
+        (argc == 3 && (!(explain || advise) || command != "diagnose"))) {
         usage();
         return 3;
     }
@@ -246,7 +247,7 @@ int main(int argc, char** argv) {
         printList(values, "Root-cause hypotheses");
     }
     dbus_connection_unref(connection);
-    if (explain) {
+    if (explain || advise) {
         weaknet_ai::ExplanationClientConfig config;
         if (const char* host = std::getenv("WEAKNET_AI_HOST")) config.host = host;
         if (const char* port = std::getenv("WEAKNET_AI_PORT")) {
@@ -265,6 +266,34 @@ int main(int argc, char** argv) {
             } catch (...) {
                 // Keep the bounded default.
             }
+        }
+        if (advise) {
+            const auto ai = weaknet_ai::ExplanationClient(config).adviseCurrent();
+            if (!ai.success) {
+                std::cout << "\nRAG advice: unavailable\nRAG error:\n  " << ai.message << "\n";
+            } else if (ai.report.status == "not_applicable") {
+                std::cout << "\nRAG advice: not applicable\n  " << ai.report.summary << "\n";
+            } else {
+                std::cout << "\nRAG advice (" << ai.report.retrieval_mode << "):\n  " << ai.report.summary << "\n";
+                if (!ai.report.knowledge_explanations.empty()) {
+                    std::cout << "Knowledge-backed interpretation:\n";
+                    for (const auto& explanation : ai.report.knowledge_explanations) {
+                        std::cout << "  - " << explanation.text;
+                        for (const auto& citation : explanation.citation_labels) std::cout << "\n      source: " << citation;
+                        std::cout << "\n";
+                    }
+                }
+                if (!ai.report.recommended_checks.empty()) {
+                    std::cout << "Recommended checks:\n";
+                    for (const auto& check : ai.report.recommended_checks) {
+                        std::cout << "  - " << check.text;
+                        for (const auto& citation : check.citation_labels) std::cout << "\n      source: " << citation;
+                        std::cout << "\n";
+                    }
+                }
+                for (const auto& limitation : ai.report.limitations) std::cout << "Limitation: " << limitation << "\n";
+            }
+            return result;
         }
         const auto ai = weaknet_ai::ExplanationClient(config).explainCurrent();
         if (!ai.success) {

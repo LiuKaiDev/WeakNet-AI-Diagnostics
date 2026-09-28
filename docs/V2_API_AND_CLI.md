@@ -67,6 +67,7 @@ weaknetctl status
 weaknetctl incidents
 weaknetctl hypotheses
 weaknetctl diagnose
+weaknetctl diagnose --advise
 ```
 
 `status` prints the compact status and exits 0 for Healthy, 1 for Degraded,
@@ -77,6 +78,14 @@ deterministic structured fields; it does not generate LLM prose. The explicit
 `weaknetctl diagnose --explain` form then calls the optional loopback AI V2
 service and renders its structured `ExplanationReport`. The deterministic
 section is printed first and is never replaced by model text.
+The explicit `weaknetctl diagnose --advise` form calls the separate grounded
+RAG-advisor endpoint. It renders structured advice, exact citation IDs, safe
+checks, limitations, and `lexical`/`hybrid` mode after the deterministic
+section. It cannot alter diagnosis fields.
+If there is no active root-cause hypothesis, the advisor returns
+`status=not_applicable` without retrieval or a provider call, and the CLI
+reports that state after the deterministic section without changing its exit
+code. Retrieval and provider failures remain separate unavailable states.
 Probe-derived supporting, contradicting, and missing evidence appears through
 the existing hypothesis evidence fields and summaries, including the Wi-Fi
 cache's interface/freshness limitations; there is no diagnosis logic or
@@ -91,3 +100,9 @@ through `WEAKNET_AI_TIMEOUT_SECONDS` and capped at 40 seconds. An unavailable
 AI service, provider timeout, invalid model output, or grounding violation is
 printed separately and leaves the deterministic Healthy/Degraded/Unknown exit
 code unchanged. `diagnose` without `--explain` never contacts AI.
+
+The advice endpoints are `POST /v2/advice` and `POST /v2/advice/current`.
+Provider advice uses `weaknet.ai.rag-advice.v1`; citation grounding rejects
+unknown or wrong-bundle chunk identities. Advice failure is reported separately
+and does not change deterministic exit status. `--advise` is never an alias for
+`--explain`.

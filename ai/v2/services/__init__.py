@@ -13,10 +13,12 @@ from .explainer import (
     ProviderRequestError,
     ProviderServerError,
 )
+from .advisor import RagAdvisorService
 
 __all__ = [
     "AiLayerError", "EvidenceExplainerService", "GroundingValidationError",
     "InvalidDiagnosisInput", "InvalidProviderOutput", "ProviderTimeout",
     "ProviderUnavailable", "ProviderAuthenticationError", "ProviderRateLimited",
     "ProviderRequestError", "ProviderServerError",
+    "RagAdvisorService",
 ]
