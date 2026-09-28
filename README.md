@@ -1,133 +1,216 @@
 # WeakNet AI Diagnostics
 
-WeakNet AI Diagnostics 是一个 Linux 原生的网络可观测与证据驱动诊断系统。它从内核和网络协议栈收集有边界、带有效性和来源信息的观测，先由确定性的 C++ 引擎生成事件、事件状态和根因假设，再通过 D-Bus V2 与 `weaknetctl` 提供查询。可选的 Python AI/RAG 服务只解释已有证据或给出带稳定引用的下一步检查，不改变确定性诊断。
+WeakNet AI Diagnostics 是一个 Linux 原生的网络可观测与证据驱动诊断系统。它从内核和网络协议栈采集拓扑、socket、TCP、主动探测、Wi-Fi 与可选 eBPF 观测，将数据规范化为带作用域、有效性、时间和来源的证据，再由确定性的 C++ `IncidentEngine` 与 `RootCauseEngine` 生成可解释诊断。可选的 Qwen explanation 与 RAG troubleshooting advice 位于诊断链路下游，只解释或引用已有结果，不改变诊断权威。
 
-## 核心能力
+## 项目解决什么问题
 
-- 通过 RTNETLINK 建模链路、地址、路由和 uplink 拓扑。
-- 通过 `NETLINK_SOCK_DIAG` 与 `TCP_INFO` 跟踪 TCP socket 生命周期和有效字段；计数器重置、缺失字段和 socket generation 会被显式处理。
-- 将 socket 与已建模路由进行可解释的 route attribution，并保留歧义和权威性边界。
-- `ActiveProbe` 对建模网关和配置的 IPv4 目标提供受限的主动证据。
-- 通过原生 `nl80211` 获取 Wi-Fi 关联、信号和速率证据。
-- 可选 eBPF 流量观测，能力不足时进入可见的 degraded 状态。
-- `EventBus` / `MetricStore` 提供有界的事件传递和快照存储。
-- `IncidentEngine` 检测可观测条件，`RootCauseEngine` 根据 Supporting、Contradicting、Missing 证据生成根因假设。
-- D-Bus V2 只读诊断接口与 `weaknetctl` 命令行客户端。
-- 可选 Qwen/DashScope `EvidenceExplainer`，以及带引用的 RAG Advisor。
-- WeakNet Lab：隔离 network namespace、`tc/netem` 场景和结构化评估结果。
+传统监控通常能够显示 RTT、重传计数、接口状态或 RSSI，却不一定区分以下状态：
 
-核心诊断不依赖 Python、模型服务或 Internet。AI 服务不可用时，确定性诊断仍然可用。
+- 指标值确实为零，还是根本没有数据；
+- telemetry 不可用，还是网络健康；
+- 已观测到异常条件，还是已经确定根因；
+- 证据不足，还是存在反证；
+- 检索到的运维知识，还是当前机器上真实观测到的网络证据。
 
-## 设计原则
+WeakNet 将这些边界编码进类型和诊断规则。每个事件、指标、incident 和根因假设都携带明确的身份、作用域、时间、有效性和 provenance；缺失或降级的采集能力不会被静默转换为“正常”。
 
-这些语义是对数据和诊断边界的约束，而不是提示词或操作指令：
+完整数据流如下：
 
-```text
-unknown != zero                 unavailable != healthy
-partial != authoritative        counter reset != zero traffic
-retransmission != packet loss   same tuple != same socket
-modeled route != guaranteed kernel route
-incident != root cause          suspected != confirmed
-missing evidence != supporting evidence
-missing evidence != contradiction
-retrieved knowledge != observed evidence
-AI/RAG unavailable != diagnosis unavailable
-```
-
-TCP 重传派生指标不能被称为权威的 packet-loss rate。旧 V1 接口中保留的字段名只表示兼容性，不改变这一语义。
+1. 从 Linux kernel/network state 收集结构化观测。
+2. `EventBus` 负责有界事件传递，`MetricStore` 保存有界快照和时间窗口。
+3. `IncidentEngine` 检测可观测的异常条件。
+4. `RootCauseEngine` 组合 Supporting、Contradicting、Missing evidence，生成保守的根因假设。
+5. `DiagnosticsQueryService` 通过 D-Bus 和 `weaknetctl` 暴露确定性结果。
+6. 可选 `EvidenceExplainer` 使用 Qwen 解释 `DiagnosisSnapshot`。
+7. 可选 RAG Advisor 检索运维知识并输出带稳定引用的检查建议。
+8. Schema、diagnosis grounding 与 citation grounding 阻止模型提升诊断权限或伪造引用。
 
 ## 系统架构
 
 ```mermaid
-flowchart LR
-    K["Linux kernel"] --> N["RTNETLINK"]
-    K --> S["SOCK_DIAG / TCP_INFO"]
-    K --> P["ActiveProbe"]
-    K --> W["nl80211 Wi-Fi"]
-    K -. optional .-> B["eBPF"]
-    N --> C["typed collectors / observations"]
-    S --> C
-    P --> C
-    W --> C
-    B --> C
-    C --> E["EventBus / MetricStore"]
-    E --> I["IncidentEngine"]
-    I --> R["RootCauseEngine"]
-    R --> Q["DiagnosticsQueryService"]
-    Q --> D["D-Bus V2"]
-    D --> CLI["weaknetctl"]
-    CLI -. deterministic diagnosis .-> CLI
-    D -. GetDiagnosis .-> X["optional Python AI runtime"]
-    X --> EX["EvidenceExplainer -> Qwen"]
-    X --> RA["RagQueryPlanner -> retrieval -> RagAdvisor -> Qwen"]
-    EX --> G["schema / diagnosis grounding"]
-    RA --> CG["citation grounding"]
+flowchart TB
+    K["Linux Kernel / Network State"]
+    K --> RT["RTNETLINK<br/>links / addresses / routes"]
+    K --> SD["NETLINK_SOCK_DIAG / TCP_INFO<br/>socket lifecycle / TCP metrics"]
+    K --> AP["ActiveProbe<br/>gateway / remote evidence"]
+    K --> WF["nl80211<br/>Wi-Fi evidence"]
+    K -. optional .-> EB["eBPF<br/>traffic observations"]
+
+    RT --> OBS["Typed Observations"]
+    SD --> OBS
+    AP --> OBS
+    WF --> OBS
+    EB --> OBS
+
+    OBS --> BUS["EventBus / MetricStore"]
+    BUS --> IE["IncidentEngine"]
+    IE --> RC["RootCauseEngine"]
+    RC --> QS["DiagnosticsQueryService"]
+    QS --> DB["D-Bus"]
+    DB --> CLI["weaknetctl"]
+
+    QS -. DiagnosisSnapshot .-> AI["Optional AI Runtime"]
+    AI --> EX["EvidenceExplainer -> Qwen<br/>Schema + Diagnosis Grounding"]
+    AI --> RAG["RagQueryPlanner -> Retrieval -> Qwen<br/>Diagnosis + Citation Grounding"]
 ```
 
-`IncidentEngine` 和 `RootCauseEngine` 是两个不同的确定性边界。典型 incident 包括 `HighTcpRtt`、`ElevatedTcpRetransmission`、`RouteUnavailable`、`UplinkUnavailable` 和 `SocketRouteConflict`。根因假设包括 `UplinkAvailabilityProblem`、`LocalRoutingProblem`、`NetworkPathDegradation`、`RemoteOrUpstreamDegradation`、`LocalLinkSuspected` 和 `InsufficientEvidence`。引擎分别保留 Supporting、Contradicting、Missing evidence；缺失能力不会被当作反证或健康。
+确定性 C++ 诊断是系统的 authority。Python、外部模型、向量索引或 Internet 均不是核心诊断的运行依赖。
 
-当前 D-Bus 使用 session bus，服务名为 `com.example.WeakNet`，V2 对象为 `/com/example/WeakNet/V2`，接口为 `com.example.WeakNet.Diagnostics2`。V1 兼容对象仍保留，但不是当前架构的主路径。详见 [`docs/V2_ARCHITECTURE.md`](docs/V2_ARCHITECTURE.md) 与 [`docs/V2_API_AND_CLI.md`](docs/V2_API_AND_CLI.md)。
+## 数据采集与证据
+
+### RTNETLINK
+
+`NetlinkCollector` 读取并订阅 link、address 和 route 状态，维护带 network namespace 身份的拓扑快照，并根据建模路由选择 uplink。Dump 只有在 sequence、sender、multipart completion、长度和错误状态都有效时才会原子提交；失败或竞争条件不会把不完整拓扑当作权威结果。
+
+路由归因是可解释的 modeled route，不等同于完整 Linux RPDB、fwmark、source policy、VRF 或 ECMP flow hashing。
+
+### NETLINK_SOCK_DIAG 与 TCP_INFO
+
+`SocketTracker` 通过 `NETLINK_SOCK_DIAG` 枚举 IPv4/IPv6 TCP socket，并从可用的 `TCP_INFO` 字段计算 RTT、吞吐与重传 interval metrics。socket identity 包含 namespace、cookie（可用时）和 generation；相同四元组不代表同一个 socket 生命周期。
+
+只有同一 generation、时间递增且 counter 字段兼容的样本才能计算 delta。counter 回退会重置 baseline，而不是生成负值或零流量。
+
+**TCP retransmission != packet loss。** `delta_total_retrans / delta_data_segs_out` 是重传 segment ratio；它不是权威 packet-loss rate，分母不可用或为零时结果保持 unavailable。
+
+### ActiveProbe
+
+`ActiveProbe` 对建模网关和配置的 numeric IPv4 remote target 执行有界 ICMP datagram probe，提供 reachability 与 RTT 证据。一次 timeout 只是一次观测，不是丢包百分比，也不能单独证明本地链路、ISP 或远端服务故障。
+
+### nl80211
+
+`WifiCollector` 通过 Generic Netlink/nl80211 获取当前接口的 association、signal、bitrate 与可选 counters。`NotWifi`、`Unsupported`、`PermissionDenied`、stale 或缺失属性会保持显式状态。低 RSSI 与累计 retry counter 是上下文，不是干扰、AP 故障或 packet loss 的直接证明。
+
+### eBPF
+
+eBPF 流量观测是可选能力。构建、加载、attach、BTF 或权限不足时，daemon 以可见的 degraded capability 继续运行，不会把缺失流量证据报告为健康值。
+
+## 确定性诊断
+
+```text
+Observation -> Incident -> RootCauseHypothesis
+```
+
+`IncidentEngine` 检测“已经观测到什么异常”，不推断原因。它使用作用域、socket generation、连续样本和 recovery hysteresis 管理 incident 生命周期。
+
+| Incident | 含义 |
+| --- | --- |
+| `HighTcpRtt` | 某个 socket 的 TCP-estimated RTT 持续超过阈值 |
+| `ElevatedTcpRetransmission` | 有效发送区间内重传 segment ratio 持续升高 |
+| `RouteUnavailable` | 权威 modeled topology 对 socket 目的地没有可用路由 |
+| `SocketRouteConflict` | `diag_ifindex` 与 modeled route interface 明确冲突 |
+| `UplinkUnavailable` | 权威拓扑中没有选中的可用 uplink |
+
+`RootCauseEngine` 在 active incidents 基础上组合拓扑、probe 与 Wi-Fi context，生成证据支持的 hypothesis，而不是绝对因果结论。
+
+| Root-cause hypothesis | 含义 |
+| --- | --- |
+| `UplinkAvailabilityProblem` | 权威 uplink 状态不可用 |
+| `LocalRoutingProblem` | 路由不存在或 socket-route 明确冲突 |
+| `NetworkPathDegradation` | socket path 出现 RTT/重传退化 |
+| `RemoteOrUpstreamDegradation` | 本地网关正常，而更远目标出现退化迹象 |
+| `LocalLinkSuspected` | path incident 与当前 Wi-Fi association/signal 证据相关 |
+| `InsufficientEvidence` | incident 存在，但必要上下文缺失或过期 |
+
+每个 hypothesis 分离三类 evidence：
+
+- `Supporting`：与当前假设一致的观测；
+- `Contradicting`：削弱当前假设的观测；
+- `Missing`：需要但不可用、过期或不适用的证据。
+
+Confidence 为确定性规则产生的 `Low`、`Medium` 或 `High`，不是概率。`suspected` 不会被写成 `confirmed`；例如 `RemoteOrUpstreamDegradation` 只表示退化迹象可能位于 immediate gateway 之外，不等同于确认 ISP 或远端服务器故障。
+
+## 核心语义边界
+
+```text
+unknown != zero
+unavailable != healthy
+partial != authoritative
+counter reset != zero traffic
+retransmission != packet loss
+same tuple != same socket
+modeled route != guaranteed kernel route
+incident != root cause
+missing evidence != supporting evidence
+missing evidence != contradiction
+retrieved knowledge != observed evidence
+AI/RAG unavailable != diagnosis unavailable
+suspected != confirmed
+```
+
+这些规则同时约束 collector、diagnosis、D-Bus serialization、CLI 与 AI 输出，避免在数据不完整时制造虚假的确定性。
 
 ## AI 与 RAG
 
-AI 是下游、可选的解释层：
+### `diagnose --explain`
 
-- `weaknetctl diagnose --explain` 解释 C++ 返回的 `DiagnosisSnapshot`；模型不能修改 root-cause type、confidence、状态或证据角色。
-- `weaknetctl diagnose --advise` 使用 `DiagnosisSnapshot -> RagQueryPlanner -> BM25 -> 可选 BGE/FAISS -> RRF -> 可选 reranker -> RetrievalBundle -> grounded advisor`，返回安全的下一步检查和稳定 citation。
-- `LlmProvider` 支持真实 DashScope/Qwen 和仅用于测试的 fake provider；没有自动 remediation、shell 执行或 agent 行为。
-- 真实 lexical BM25 + Qwen advisor 已完成 live 验证；混合架构已实现，但真实 BGE-M3/reranker 执行受本地模型权重和环境限制，不能宣称已完成 hybrid live pass。
-
-详细边界见 [`docs/AI_V2_ARCHITECTURE.md`](docs/AI_V2_ARCHITECTURE.md)、[`docs/AI_V2_PROVIDER.md`](docs/AI_V2_PROVIDER.md)、[`docs/AI_V2_RUNTIME.md`](docs/AI_V2_RUNTIME.md) 和 [`docs/AI_V2_RAG.md`](docs/AI_V2_RAG.md)。旧的原始日志工具位于 [`optional/experimental/log-analysis-tools/`](optional/experimental/log-analysis-tools/)，仅作 legacy/optional 使用，不是主 AI 路径。
-
-## 目录结构
-
-```text
-server/                         C++ daemon、collectors 和 diagnosis engines
-client/                         weaknetctl、兼容库及示例
-ai/v2/                          可选 Python explanation/RAG runtime
-ai/knowledge/                   allowlisted RAG knowledge corpus
-lab/                            隔离场景和 evaluation harness
-tests/                          C++ unit/integration/contract tests
-docs/                           当前架构、API、构建和限制
-optional/experimental/          legacy 原始日志分析工具
+```bash
+weaknetctl diagnose --explain
 ```
 
-## 构建
+`EvidenceExplainer` 接收结构化 `DiagnosisSnapshot`，调用可替换的 `LlmProvider`（真实 DashScope/Qwen 或测试用 fake provider），并返回 `ExplanationReport`。模型只能生成说明文本和引用现有 hypothesis/evidence ID，不能修改 root-cause type、confidence、state、scope 或 `EvidenceRole`。
 
-最容易复现的构建关闭 eBPF；核心 C++、D-Bus 和 CTest 不依赖 Python：
+### `diagnose --advise`
+
+```text
+DiagnosisSnapshot
+  -> RagQueryPlanner
+  -> BM25
+  -> optional BGE / FAISS
+  -> RRF
+  -> optional reranker
+  -> RetrievalBundle
+  -> Qwen
+  -> Diagnosis Grounding
+  -> Citation Grounding
+```
+
+RAG Advisor 提供 evidence-aware troubleshooting suggestions。语料由 `ai/knowledge/manifest.json` allowlist 管理；每个 chunk 具有稳定的 document/chunk/version identity。建议中的知识性说明和检查项必须引用当前 `RetrievalBundle` 内的精确 citation。
+
+BM25 lexical retrieval 始终可用。BGE、FAISS 与 reranker 是 lazy、可选能力；普通启动不会自动下载模型。真实 lexical BM25 + Qwen advisor 已做 live validation；真实 BGE/reranker hybrid 执行仍取决于本地模型权重与兼容环境。
+
+检索到的知识不是当前网络观测。系统不会把知识库内容升级为 Supporting evidence，也没有 autonomous agent、shell execution 或自动 remediation。
+
+## 为什么 AI 不会替代确定性诊断
+
+- C++ `IncidentEngine` 与 `RootCauseEngine` 输出始终是 authority。
+- Provider output 必须通过固定 schema，未知字段和权威诊断字段会被拒绝。
+- `GroundingValidator` 校验 hypothesis/evidence ID、角色、作用域和 missing-evidence 限制，防止 authority escalation。
+- `CitationGroundingValidator` 要求建议只能引用本次检索 bundle 内的稳定 citation，防止伪造来源。
+- 最终 report 从 `DiagnosisSnapshot` 复制 root cause、confidence 和 evidence roles，而不是相信模型文本。
+- AI service、provider 或 retrieval 失败会单独报告，不会删除确定性诊断或改变其退出码。
+
+## 使用方式
+
+### 构建与测试
+
+不启用 eBPF 的构建最容易复现：
 
 ```bash
 cmake -S . -B build/no-ebpf -G Ninja \
   -DCMAKE_BUILD_TYPE=RelWithDebInfo \
-  -DENABLE_EBPF=OFF -DBUILD_TESTING=ON
+  -DENABLE_EBPF=OFF \
+  -DBUILD_TESTING=ON
 cmake --build build/no-ebpf --parallel
 ctest --test-dir build/no-ebpf --output-on-failure
 ```
 
-需要 eBPF 时，主机必须提供 Clang BPF code generation、libbpf/libelf/zlib、可读的 `/sys/kernel/btf/vmlinux` 或 `WEAKNET_VMLINUX_HEADER`，并满足内核 BTF/权限条件：
+启用 eBPF 需要 Clang BPF backend、libbpf/libelf/zlib、kernel BTF 或预生成 `vmlinux.h`，以及相应运行权限。详细选项见 [构建与测试](docs/BUILDING.md)。
 
-```bash
-cmake -S . -B build/default -G Ninja \
-  -DCMAKE_BUILD_TYPE=RelWithDebInfo \
-  -DENABLE_EBPF=ON -DBUILD_TESTING=ON
-cmake --build build/default --parallel
-ctest --test-dir build/default --output-on-failure
-```
+### 启动确定性诊断
 
-主要产物为 `build/<name>/bin/weaknet-dbus-server`、`build/<name>/bin/weaknetctl`、`build/<name>/lib/libweaknet.so` 和 `build/<name>/libexec/weaknet/weaknet-ping-helper`。根目录 `Makefile` 仍提供历史 staging 兼容入口；新文档以 CMake 构建树为准。完整依赖和安装说明见 [`docs/BUILDING.md`](docs/BUILDING.md)。
-
-## 快速开始
-
-启动一个 session bus shell，并在该 shell（或继承其 D-Bus 环境的终端）
-中从构建树运行服务和 CLI：
+当前服务使用 session D-Bus。进入一个 session-bus shell：
 
 ```bash
 dbus-run-session -- bash
 ```
 
+在该 shell 中启动 server：
+
 ```bash
 ./build/no-ebpf/bin/weaknet-dbus-server
 ```
+
+在继承同一 `DBUS_SESSION_BUS_ADDRESS` 的终端中运行：
 
 ```bash
 ./build/no-ebpf/bin/weaknetctl status
@@ -136,17 +219,16 @@ dbus-run-session -- bash
 ./build/no-ebpf/bin/weaknetctl diagnose
 ```
 
-`status` 的退出码为 Healthy=0、Degraded=1、Unknown=2；D-Bus/用法错误为 3 或更高。服务端和 CLI 都是只读诊断接口，不修改网络配置。
+`status` 返回总体状态、topology authority、collector degradation、uplink、active incidents 和 hypotheses。`diagnose` 输出结构化的确定性状态、incident、root-cause hypothesis 和 evidence summary。
 
-## AI 可选运行
-
-创建仓库虚拟环境并安装运行时依赖后，在同一个 session bus 环境中启动可选服务：
+## 可选 AI 服务
 
 ```bash
 python3 -m venv .venv
 .venv/bin/pip install -r ai/requirements-runtime.txt
+
 WEAKNET_LLM_PROVIDER=dashscope \
-WEAKNET_LLM_MODEL="<model-name>" \
+WEAKNET_LLM_MODEL="<model>" \
 DASHSCOPE_API_KEY="<your-key>" \
 .venv/bin/python -m ai.v2.runtime
 ```
@@ -158,41 +240,61 @@ DASHSCOPE_API_KEY="<your-key>" \
 ./build/no-ebpf/bin/weaknetctl diagnose --advise
 ```
 
-这些变量只接受占位符示例；仓库不包含密钥。AI 服务、provider、检索或 grounding 失败会单独报告，并保留确定性诊断结果和退出码。`ai/requirements-rag.txt` 只在需要本地 dense BGE/FAISS/reranker 时安装，模型不会由普通启动流程自动下载。
+AI runtime 默认只监听 `127.0.0.1:8765`。缺少 key、provider timeout、invalid schema、grounding violation 或 retrieval failure 都会作为独立错误显示。
 
 ## WeakNet Lab
 
-WeakNet Lab 是可复现的场景与评估 harness。它只在自己创建的 namespace/veth/qdisc 中操作，缺少 `CAP_NET_ADMIN`/`CAP_SYS_ADMIN` 时输出明确的 `SKIP`，不会修改宿主网络：
+WeakNet Lab 在自己创建的 network namespace、veth 和 qdisc 中运行真实 daemon 与本地 workload，用 `tc/netem` 注入有界故障，再从 D-Bus 读取诊断并生成结构化 evaluation artifact。它不会向 engine 注入 incident 或 hypothesis。
 
 ```bash
 export WEAKNET_LAB_BUILD_DIR=build/no-ebpf
 ./lab/weaknet-lab doctor
 ./lab/weaknet-lab list
-./lab/weaknet-lab run healthy --no-ai
-./lab/weaknet-lab run high-rtt --no-ai
 ```
 
-`healthy`、`high-rtt`、`retransmission`、`uplink-unavailable` 是真实内核/network-namespace 场景；`fixture-demo` 是明确标记为 `SIMULATION` 的离线演示。物理 Wi-Fi 和特权场景是否能运行取决于主机能力，评估文件会保留 setup/skip 原因。详见 [`lab/README.md`](lab/README.md)。
+主要场景：
 
-## 测试与验证边界
+- `healthy`：本地 TCP 流量，无注入故障；
+- `high-rtt`：持续 RTT degradation；
+- `retransmission`：netem loss 触发重传证据；
+- `uplink-unavailable`：仅移除 lab namespace 的默认路由；
+- `observability-gap`：可选 telemetry 不可用。
 
-- C++ CTest 覆盖序列化、拓扑/socket/parser、事件、incident、root cause、D-Bus contract 和生命周期。
-- Python `ai/tests/` 覆盖 schema、provider、grounding、RAG 和离线 runtime；正常测试不调用外部模型。
-- 真实 `qwen3.8-flash` explanation/advisor 测试和 lexical advisor live 验证需要显式环境变量；namespace 测试按 capability gating 执行。
-- BGE/reranker hybrid live 验证需要本地权重或可用模型环境；缺少时应视为环境限制，而不是通过小 fixture 推导生产准确率。
+缺少 network namespace 或 capability 时，场景写入明确的 `SKIP`，不会修改 host network。`fixture-demo` 是明确标记的 `SIMULATION`，不代表真实 kernel telemetry。
+
+## 测试与验证
+
+- C++ CTest 覆盖 topology、socket lifecycle、`TCP_INFO`、route attribution、EventBus、MetricStore、ActiveProbe、nl80211、IncidentEngine、RootCauseEngine、D-Bus、CLI、lifecycle 与 C ABI contract。
+- Python tests 覆盖 `DiagnosisSnapshot`、provider、schema、`GroundingValidator`、BM25/hybrid retrieval、RAG Advisor、`CitationGroundingValidator` 与 runtime HTTP boundary。
+- 真实 Qwen explanation/advisor 与 lexical RAG 验证为显式 opt-in；普通测试不会访问外部 provider。
+- namespace/eBPF/Wi-Fi 测试受 host capability 和设备限制，缺少条件时明确 skip/degraded。
+- 小型 fixture 用于验证 schema 与 grounding，不作为生产准确率或“100% citation accuracy”声明。
+
+## 项目结构
+
+```text
+server/       C++ daemon、collectors、stores 与 diagnosis engines
+client/       weaknetctl、C compatibility library 与示例
+ai/v2/        可选 explanation / grounded RAG runtime
+ai/knowledge/ allowlisted runtime knowledge corpus
+lab/          隔离场景与 evaluation harness
+tests/        C++ unit、integration 与 contract tests
+docs/         当前架构、诊断、接口、AI/RAG、构建文档
+```
 
 ## 已知限制
 
-- 当前验证路径使用 session D-Bus；system bus/systemd 部署仍是后续运维工作。
-- namespace、eBPF 和真实 Wi-Fi 测试依赖主机 capability、BTF、内核和设备。
-- modeled route attribution 不等同于完整 Linux RPDB、fwmark、VRF 或 ECMP 路由等价性。
-- AI 依赖外部 provider 或本地模型，始终是可选项。
+- 当前运行和测试路径使用 session D-Bus，尚未提供完整 system-bus/systemd production packaging。
+- modeled route attribution 不覆盖完整 RPDB、fwmark、source policy、VRF 和 ECMP flow hashing。
+- ActiveProbe 当前使用 numeric IPv4 target，不提供 DNS、traceroute、jitter 或 packet-loss window。
+- namespace、eBPF 与 physical Wi-Fi 验证取决于 host capability、kernel/BTF 和实际设备。
+- dense BGE/FAISS/reranker live validation 需要可用的本地模型权重与兼容 runtime。
+- AI 依赖外部 provider 或本地模型，但始终是可选层。
 
-## 文档索引
+## 进一步阅读
 
-- [V2 架构](docs/V2_ARCHITECTURE.md) · [D-Bus API 与 CLI](docs/V2_API_AND_CLI.md)
-- [IncidentEngine](docs/INCIDENT_ENGINE.md) · [RootCauseEngine](docs/ROOT_CAUSE_ENGINE.md)
-- [ActiveProbe](docs/ACTIVE_PROBE.md) · [Wi-Fi evidence](docs/WIFI_EVIDENCE.md)
-- [构建与测试](docs/BUILDING.md) · [代码阅读指南](docs/LEARNING_GUIDE.md)
-- [AI architecture](docs/AI_V2_ARCHITECTURE.md) · [provider](docs/AI_V2_PROVIDER.md) · [runtime](docs/AI_V2_RUNTIME.md) · [RAG](docs/AI_V2_RAG.md)
-- [V2 当前状态与限制](docs/V2_ROADMAP.md) · [V1 兼容审计](docs/V1_AUDIT.md)
+- [系统架构](docs/ARCHITECTURE.md)
+- [诊断模型](docs/DIAGNOSIS.md)
+- [接口与命令行](docs/API_AND_CLI.md)
+- [AI 与 RAG](docs/AI_AND_RAG.md)
+- [构建与测试](docs/BUILDING.md)

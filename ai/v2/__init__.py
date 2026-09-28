@@ -1,4 +1,4 @@
-"""AI V2.2 structured diagnosis explanation framework.
+"""Structured diagnosis explanation and grounded RAG framework.
 
 This package makes no external network or model calls by itself.  The default
 provider is the deterministic fake provider used by tests and local demos.

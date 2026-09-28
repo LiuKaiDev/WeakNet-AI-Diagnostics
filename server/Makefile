@@ -1,4 +1,4 @@
-# Temporary server-only V1 compatibility wrapper around the Phase 1 CMake build.
+# Server-only convenience wrapper around the root CMake build.
 
 CMAKE ?= cmake
 CMAKE_GENERATOR ?= Ninja

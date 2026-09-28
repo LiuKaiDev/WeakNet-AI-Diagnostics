@@ -61,7 +61,7 @@ void TrafficAnalyzer::start(const std::string& interface, int interval_seconds) 
     interface_ = interface;
     interval_seconds_ = interval_seconds;
     
-    // Prefer the build/install layout while retaining the V1 source-tree fallback.
+    // Prefer the build/install layout while retaining the source-tree fallback.
     analyzer_->setBpfObjectPath(resolveBpfObjectPath());
     
     // 设置异常检测参数

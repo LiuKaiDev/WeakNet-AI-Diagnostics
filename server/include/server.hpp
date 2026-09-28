@@ -16,7 +16,7 @@ namespace v2 { class NetlinkCollector; }
 namespace v2 { class IncidentEngine; class RootCauseEngine; }
 namespace v2 { class DiagnosticsQueryService; }
 
-// Non-owning view passed to the retained V1 workers. DaemonApplication owns
+// Non-owning view passed to compatibility workers. DaemonApplication owns
 // every referenced object and joins all workers before destroying them.
 struct ServerContext {
     ::DBusConnection* connection = nullptr;

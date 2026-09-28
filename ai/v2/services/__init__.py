@@ -1,4 +1,4 @@
-"""AI V2 application services."""
+"""Structured explanation and grounded-advice application services."""
 
 from .explainer import (
     AiLayerError,

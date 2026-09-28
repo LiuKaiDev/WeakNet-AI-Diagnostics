@@ -15,7 +15,7 @@
 
 namespace weaknet_dbus::v2 {
 
-// Additive Phase 3 bridge. It observes already-normalized V1 values, but never
+// Compatibility observation bridge. It observes already-normalized values, but never
 // writes back to V1 or changes what the V1 D-Bus API reads.
 class V1ObservationAdapter {
 public:

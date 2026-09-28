@@ -1,4 +1,4 @@
-# Temporary V1 compatibility wrapper around the Phase 1 CMake build.
+# Convenience wrapper around the CMake build and manual client tools.
 
 CMAKE ?= cmake
 CTEST ?= ctest

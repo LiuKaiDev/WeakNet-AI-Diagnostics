@@ -1,4 +1,4 @@
-"""Real, bounded D-Bus V2 diagnosis source.
+"""Real, bounded D-Bus diagnosis source.
 
 ``dbus-next`` is imported only when the real client is used.  Fake-provider
 service startup and all unit tests therefore remain independent of it.
@@ -27,7 +27,7 @@ DEFAULT_DBUS_TIMEOUT_SECONDS = 3.0
 
 class DbusDiagnosisClient(Protocol):
     async def get_diagnosis(self) -> Mapping[str, Any]:
-        """Call V2 GetDiagnosis and return recursively decoded values."""
+        """Call GetDiagnosis and return recursively decoded values."""
 
 
 def _unwrap(value: Any) -> Any:
@@ -43,7 +43,7 @@ def _unwrap(value: Any) -> Any:
 
 
 class DbusNextDiagnosisClient:
-    """Session-bus client matching the repository's implemented V2 contract."""
+    """Session-bus client matching the implemented diagnostic contract."""
 
     async def get_diagnosis(self) -> Mapping[str, Any]:
         try:

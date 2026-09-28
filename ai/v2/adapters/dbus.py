@@ -1,4 +1,4 @@
-"""Pure adapter for decoded D-Bus V2 ``GetDiagnosis`` dictionaries."""
+"""Pure adapter for decoded D-Bus ``GetDiagnosis`` dictionaries."""
 
 from __future__ import annotations
 

@@ -1,4 +1,4 @@
-"""Deterministic, explicitly simulated provider for AI V2."""
+"""Deterministic, explicitly simulated provider for AI tests and demos."""
 
 from __future__ import annotations
 

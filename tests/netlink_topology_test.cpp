@@ -564,13 +564,13 @@ int main() {
     const auto interfaces = compatibility.collectCurrentInterfaces();
     ok &= expect(interfaces.size() == 1 && interfaces.front().ifName() == "wan-test.0" &&
                  interfaces.front().isDefaultRoute(),
-                 "V1 interface listing did not use reconciled topology");
+                 "compatibility interface listing did not use reconciled topology");
     std::string using_name; std::uint32_t using_flags = 0;
     auto mutable_interfaces = interfaces;
     compatibility.updateCurrentUsing(mutable_interfaces, false, &using_name, &using_flags);
     ok &= expect(using_name == "wan-test.0" && !mutable_interfaces.empty() &&
                  mutable_interfaces.front().usingNow(),
-                 "V1 current-uplink compatibility did not use policy result");
+                 "compatibility current-uplink query did not use policy result");
     subscription.unsubscribe();
     bus.stop();
     return ok ? 0 : 1;

@@ -21,7 +21,7 @@ static constexpr const char kSignalInterfaceChanged[] = "InterfaceChanged"; // �
 static constexpr const char kSignalConnectionModeChanged[] = "ConnectionModeChanged"; // 上网方式变化信号
 static constexpr const char kSignalNetworkQualityChanged[] = "NetworkQualityChanged"; // 网络质量变化信号
 
-// Additive, versioned read-only V2 diagnostic surface.
+// Versioned, read-only diagnostic surface.
 static constexpr const char kV2ObjectPath[] = "/com/example/WeakNet/V2";
 static constexpr const char kV2Interface[] = "com.example.WeakNet.Diagnostics2";
 static constexpr const char kV2MethodGetStatus[] = "GetStatus";

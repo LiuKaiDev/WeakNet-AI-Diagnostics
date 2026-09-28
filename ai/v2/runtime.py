@@ -1,4 +1,4 @@
-"""Read-only localhost HTTP product adapter for AI V2.
+"""Read-only localhost HTTP adapter for structured explanation and RAG advice.
 
 Run from the repository root with ``python -m ai.v2.runtime``.  The core
 explainer and diagnosis source remain independent of this HTTP adapter.

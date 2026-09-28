@@ -5,7 +5,7 @@ project(WeakNetAIDiagnostics VERSION 1.0.0 LANGUAGES C CXX)
 include(GNUInstallDirs)
 include(CTest)
 
-option(ENABLE_EBPF "Build the existing V1 eBPF traffic observer" ON)
+option(ENABLE_EBPF "Build the optional eBPF traffic observer" ON)
 set(WEAKNET_SANITIZER "none" CACHE STRING
     "Project-code sanitizer: none, address-undefined, or thread")
 set_property(CACHE WEAKNET_SANITIZER PROPERTY STRINGS none address-undefined thread)

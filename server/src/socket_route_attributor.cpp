@@ -106,7 +106,7 @@ SocketRouteContextObservation SocketRouteAttributor::attribute(
     for (const auto& route : topology.routes) {
         if (!route.present || route.netns != topology.netns ||
             !supportedFamily(route.family) || !prefixMatches(tuple.remote, route)) continue;
-        // Phase 4 models these route types.  Other types are not silently
+        // The topology model supports these route types. Other types are not silently
         // converted into a normal egress claim.
         if (route.type != RTN_UNICAST && route.type != RTN_LOCAL &&
             route.type != RTN_BLACKHOLE && route.type != RTN_UNREACHABLE &&

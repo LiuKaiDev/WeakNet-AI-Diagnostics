@@ -61,7 +61,6 @@ env/
 
 # Optional generated data
 
-optional/experimental/log-analysis-tools/network_knowledge_vectorstore_local/
 /.weaknet-rag-index/
 /.models/
 /models/

@@ -7,7 +7,7 @@
 
 namespace weaknet_dbus::v2 {
 
-// Pure, deterministic attribution over a committed Phase 4 model.  This is
+// Pure, deterministic attribution over a committed topology model. This is
 // intentionally not a Linux RPDB/FIB implementation.
 class SocketRouteAttributor {
 public:

@@ -144,7 +144,7 @@ check_dependencies() {
 
     local missing_deps=()
 
-    # Phase 1 always-required build tools.
+    # Build tools required for every configuration.
     if ! command -v g++ &> /dev/null; then
         missing_deps+=("g++")
     fi
@@ -236,12 +236,12 @@ build_project() {
 
 # 运行测试
 run_tests() {
-    print_info "运行Phase 1确定性测试..."
+    print_info "运行确定性测试..."
 
     if ctest --test-dir build/install --output-on-failure; then
-        print_success "Phase 1测试通过"
+        print_success "确定性测试通过"
     else
-        print_error "Phase 1测试失败"
+        print_error "确定性测试失败"
         exit 1
     fi
 }

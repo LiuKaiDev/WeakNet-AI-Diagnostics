@@ -188,15 +188,15 @@ int main(int argc, char** argv) {
     pid_t active_child = launch(argv[2], root / "active");
     ok &= expect(waitForOwner(connection, true, 5s), "active fixture did not acquire name");
     ok &= expect(interfaceListMethodWorks(connection, "ListInterfaces"),
-                 "V1 ListInterfaces did not return an array");
+                 "compatibility ListInterfaces did not return an array");
     ok &= expect(interfaceListMethodWorks(connection, "GetInterfaces"),
-                 "V1 GetInterfaces did not return an array");
+                 "compatibility GetInterfaces did not return an array");
     ok &= expect(degradedHealthVisible(connection), "degraded runtime health was not visible");
-    ok &= expect(v2MethodWorks(connection, "GetStatus", true), "V2 GetStatus failed");
-    ok &= expect(v2MethodWorks(connection, "ListActiveIncidents", false), "V2 incidents failed");
-    ok &= expect(v2MethodWorks(connection, "ListRootCauseHypotheses", false), "V2 hypotheses failed");
-    ok &= expect(v2MethodWorks(connection, "GetDiagnosis", true), "V2 diagnosis failed");
-    ok &= expect(v2MethodWorks(connection, "GetTopologySummary", true), "V2 topology failed");
+    ok &= expect(v2MethodWorks(connection, "GetStatus", true), "diagnostic GetStatus failed");
+    ok &= expect(v2MethodWorks(connection, "ListActiveIncidents", false), "diagnostic incidents failed");
+    ok &= expect(v2MethodWorks(connection, "ListRootCauseHypotheses", false), "diagnostic hypotheses failed");
+    ok &= expect(v2MethodWorks(connection, "GetDiagnosis", true), "diagnostic diagnosis failed");
+    ok &= expect(v2MethodWorks(connection, "GetTopologySummary", true), "diagnostic topology failed");
     ok &= expect(sendPing(connection), "could not queue active Ping request");
     std::this_thread::sleep_for(200ms);
     ok &= expect(stopAndWait(active_child, SIGTERM, "active-ping"),

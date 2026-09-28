@@ -1,4 +1,4 @@
-"""Optional, advisory hybrid retrieval for AI V2.
+"""Optional, advisory hybrid retrieval for structured diagnosis.
 
 The package deliberately has no eager imports of torch, transformers, numpy, or
 faiss.  Importing :mod:`ai.v2` therefore remains safe on the minimal runtime.

@@ -1,4 +1,4 @@
-"""Canonical, versioned diagnosis input for AI V2.
+"""Canonical, versioned diagnosis input for optional AI services.
 
 The module intentionally uses only the Python standard library.  The C++
 diagnosis remains authoritative; these dataclasses are a bounded, loss-aware

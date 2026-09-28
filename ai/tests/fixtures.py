@@ -1,4 +1,4 @@
-"""Small deterministic AI V2 diagnosis fixtures; no model output is encoded."""
+"""Small deterministic diagnosis fixtures; no model output is encoded."""
 
 from __future__ import annotations
 
@@ -61,4 +61,3 @@ def insufficient_evidence() -> DiagnosisSnapshot:
             {"kind": "GatewayProbeUnavailable"}, {"kind": "WifiEvidenceUnavailable"},
         ],
     }, ["Gateway and Wi-Fi telemetry unavailable"])
-

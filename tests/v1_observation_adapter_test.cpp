@@ -59,7 +59,7 @@ int main() {
     bus.stop();
 
     ok &= expect(before.rttMs() == 42 && before.state() == NetState::Up,
-                 "adapter mutated V1 state");
+                 "adapter mutated compatibility state");
     ok &= expect(events.size() == 7, "representative mirrors did not publish one event each");
     for (const auto& event : events) {
         ok &= expect(event.header().netns == ns, "adapter lost namespace identity");
@@ -101,6 +101,6 @@ int main() {
     unavailable_bus.stop();
     const auto unavailable = unavailable_store.latest(traffic_key);
     ok &= expect(unavailable && unavailable->validity == Validity::Unavailable &&
-                 !unavailable->value, "degraded V1 traffic silently became zero");
+                 !unavailable->value, "degraded compatibility traffic silently became zero");
     return ok ? 0 : 1;
 }

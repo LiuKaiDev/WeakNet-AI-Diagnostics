@@ -1,5 +1,5 @@
 # Optional developer/runtime dependencies for explicit dense RAG use.
-# CPU-only installs are supported; no dependency is imported by normal AI V2 startup.
+# CPU-only installs are supported; normal AI runtime startup does not import these dependencies.
 # The explicit CPU index/pin prevents pip from selecting a multi-gigabyte CUDA
 # wheel on CPU-only WSL hosts. Keep this line when installing this file.
 --extra-index-url https://download.pytorch.org/whl/cpu
