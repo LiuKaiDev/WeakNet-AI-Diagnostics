@@ -378,6 +378,22 @@ adapts requests to the transport-neutral explainer. Finally read
 `weaknetctl diagnose` remains entirely deterministic; only `--explain` crosses
 the optional process boundary.
 
+### AI V2.3A retrieval
+
+After the explanation path, read `ai/v2/rag/query_planner.py` and
+`schemas.py`. The planner starts from typed hypotheses and evidence roles, then
+projects away SSID, BSSID, addresses, interface names, and socket tuples. Read
+`knowledge.py`/`chunking.py` for the explicit manifest and stable provenance,
+then `bm25.py`, `embeddings.py`, `faiss_index.py`, `fusion.py`, and
+`reranker.py` for the independent retrieval stages. `retriever.py` assembles
+these into a bounded `RetrievalBundle`; it is advisory and cannot alter a
+diagnosis type or confidence. Dense dependencies are intentionally optional and
+lazy. Use `python -m ai.v2.rag.cli query ...` for lexical inspection and the
+explicit `build` command only when a local BGE/FAISS installation is available.
+The evaluation helpers report Recall@K and reciprocal rank separately per
+stage. AI V2.3B will decide how (and whether) retrieved citations are used by
+Qwen; this stage does not do that.
+
 ## Three end-to-end traces to perform
 
 ### Trace A: route switch

@@ -37,6 +37,10 @@ class RuntimeServiceTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(capabilities["selected_provider"], "fake")
         self.assertTrue(capabilities["explanations_available"])
+        rag_status, rag = app.handle("GET", "/v2/rag/capabilities")
+        self.assertEqual(rag_status, 200)
+        self.assertTrue(rag["bm25_available"])
+        self.assertFalse(rag["hybrid_ready"])
 
     def test_dashscope_without_key_stays_live_but_explanation_is_explicit(self):
         app = AiExplanationApplication.from_env(

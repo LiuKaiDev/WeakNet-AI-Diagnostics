@@ -1,4 +1,4 @@
-# AI V2.2: structured diagnosis contract and evidence explainer
+# AI V2.3A: structured diagnosis, evidence explainer, and advisory retrieval
 
 AI V2.2 is an optional Python presentation layer downstream of the
 deterministic C++ diagnosis pipeline:
@@ -6,6 +6,7 @@ deterministic C++ diagnosis pipeline:
 ```text
 Linux observations -> IncidentEngine -> RootCauseEngine
     -> DiagnosticsQueryService -> DiagnosisSnapshot -> AI V2 explanation
+    -> RetrievalQuery -> optional hybrid retrieval (not yet sent to Qwen)
 ```
 
 The C++ engines remain authoritative. AI V2 cannot create incidents, invent a
@@ -102,6 +103,34 @@ Error categories are explicit: invalid diagnosis input, input too large,
 provider unavailable/timeout, invalid provider output, grounding violation,
 and internal/provider-boundary failure. AI failures never map to network
 health state.
+
+## AI V2.3A retrieval boundary
+
+`ai/v2/rag` is an optional, advisory retrieval layer. `RagQueryPlanner`
+projects each structured `DiagnosisSnapshot` hypothesis into a deterministic,
+privacy-aware `RetrievalQuery`; it never reads daemon logs, human-readable CLI
+output, or user-controlled scope identifiers. Supporting, contradicting, and
+missing evidence remain distinct. Missing evidence adds check/procedure terms,
+not claims that the missing condition exists.
+
+The allowlisted corpus in `ai/knowledge/manifest.json` produces provenance-
+preserving `KnowledgeDocument` and deterministic `KnowledgeChunk` records.
+BM25 is always lightweight and available. Dense retrieval is behind lazy
+`EmbeddingModel`, `VectorIndex`/FAISS, and `Reranker` abstractions. Hybrid
+retrieval runs lexical and dense stages independently, combines ranks with
+named reciprocal-rank fusion, then applies a bounded reranker. Native scores,
+ranks, source/version, and stable citation IDs are retained in
+`RetrievalBundle`.
+
+Model/index configuration is optional (`ai/requirements-rag.txt`); normal
+imports never download models. Capabilities distinguish configured, loaded,
+installed, compatible, and ready states. The additive
+`GET /v2/rag/capabilities` endpoint is read-only. Retrieval failure cannot
+affect deterministic diagnosis or the existing explanation endpoint.
+
+This stage deliberately stops at `RetrievalBundle`: no retrieval context is
+passed to Qwen, and no troubleshooting generator, agent, shell execution, or
+remediation is implemented. Those are AI V2.3B concerns.
 
 ## Runtime product path
 

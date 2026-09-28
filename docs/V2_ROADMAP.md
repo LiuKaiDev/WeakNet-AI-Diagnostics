@@ -489,6 +489,12 @@ provider; live requests require explicit provider selection, an opt-in flag,
 and `DASHSCOPE_API_KEY`. No RAG, embeddings, or agent behavior is implemented.
 The C++ diagnosis remains authoritative.
 
+AI V2.3A is implemented as a separate retrieval-only increment under
+`ai/v2/rag`. It plans semantic queries from `DiagnosisSnapshot`, indexes a
+small explicit corpus, and provides offline-testable BM25, optional dense
+embeddings/FAISS, RRF, reranking, capabilities, and evaluation metrics. It
+does not inject context into Qwen; that remains AI V2.3B.
+
 Objective: provide a read-only advisory explanation product after the
 deterministic core and export schema are stable.
 

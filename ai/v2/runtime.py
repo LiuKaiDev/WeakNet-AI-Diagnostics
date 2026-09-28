@@ -20,6 +20,7 @@ from .schemas.diagnosis import DiagnosisSnapshot, DiagnosisValidationError, Inpu
 from .services.explainer import EvidenceExplainerService
 from .sources.base import DiagnosisSource
 from .sources.dbus import DbusDiagnosisSource
+from .rag.capabilities import capabilities as rag_capabilities
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8765
@@ -92,6 +93,10 @@ class AiExplanationApplication:
             result["provider_error"] = {"category": category, "message": message}
         return result
 
+    def rag_capabilities(self) -> dict[str, Any]:
+        """Report optional retrieval availability without loading models."""
+        return rag_capabilities().to_dict()
+
     async def explain(self, snapshot: DiagnosisSnapshot, request_id: str = "") -> dict[str, Any]:
         if self.explainer is None:
             raise self.provider_error or ProviderUnavailable("provider unavailable")
@@ -107,6 +112,8 @@ class AiExplanationApplication:
                 return 200, {"status": "live"}
             if method == "GET" and path == "/v2/capabilities":
                 return 200, self.capabilities()
+            if method == "GET" and path == "/v2/rag/capabilities":
+                return 200, self.rag_capabilities()
             if method == "POST" and path == "/v2/explanations":
                 payload = json.loads(body.decode("utf-8"))
                 snapshot = DiagnosisSnapshot.from_dict(payload)
