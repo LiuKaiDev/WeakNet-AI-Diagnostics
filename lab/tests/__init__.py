@@ -1,0 +1,1 @@
+"""WeakNet Lab tests."""

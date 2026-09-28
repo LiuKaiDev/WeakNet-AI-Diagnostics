@@ -1,0 +1,19 @@
+{
+  "schema_version": "weaknet.lab.scenario.v1",
+  "scenario_id": "healthy",
+  "title": "Isolated control path",
+  "purpose": "Establish an authoritative namespace topology and real local TCP traffic without an injected network fault.",
+  "required_capabilities": ["linux", "ip", "tc", "netns", "cap_net_admin", "session_dbus", "weaknetd", "weaknetctl", "python_venv", "dbus_next"],
+  "workload": "tcp-echo",
+  "fault": "none",
+  "fault_options": {},
+  "warmup_seconds": 7,
+  "observation_timeout_seconds": 8,
+  "expected_incidents": [],
+  "expected_hypothesis_types": [],
+  "allowed_hypothesis_types": [],
+  "allowed_statuses": ["Healthy", "Degraded"],
+  "recovery": false,
+  "recovery_timeout_seconds": 10,
+  "require_nonhealthy_status": false
+}

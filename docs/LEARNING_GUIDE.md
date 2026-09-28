@@ -314,7 +314,10 @@ Read contract tests beside the XML. Then use `weaknetctl` to follow the same str
 
 ### 14. Read the WeakNet Lab
 
-Read fixture creation and cleanup before scenarios. Verify that names, namespaces, qdiscs, and processes are uniquely scoped and always cleaned.
+Start with `lab/README.md`, then read `lab/weaknet_lab/runner.py` fixture
+creation and cleanup before the JSON scenario manifests. Verify that names,
+namespaces, qdiscs, and processes are uniquely scoped, commands are bounded,
+and state is retained if privilege is unavailable for a cleanup retry.
 
 For one scenario, trace:
 
@@ -331,6 +334,9 @@ topology setup
 ```
 
 Scenario assertions should target structured schemas/evidence, not logs or prose.
+The live path uses the real daemon, D-Bus diagnosis, and production C++
+engines. `fixture-demo` is a separate, explicitly labeled simulation. AI is
+disabled by default and its opt-in checks cannot replace deterministic results.
 
 ### 15. Read benchmarks and evaluation artifacts
 
@@ -422,7 +428,7 @@ when incomplete. Model weights and generated indexes stay outside Git.
 
 ### Trace B: socket retransmission
 
-1. Start from controlled TCP traffic in the lab.
+1. Run or read the controlled TCP traffic in `lab/scenarios/retransmission.json`.
 2. Follow SocketTracker identity and TCP_INFO deltas.
 3. Correlate any eBPF retransmission event.
 4. Confirm metric scope/denominator validity.

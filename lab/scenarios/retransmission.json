@@ -1,0 +1,19 @@
+{
+  "schema_version": "weaknet.lab.scenario.v1",
+  "scenario_id": "retransmission",
+  "title": "Elevated TCP retransmission",
+  "purpose": "Use controlled server-egress packet loss to cause real TCP retransmissions while preserving retransmission semantics.",
+  "required_capabilities": ["linux", "ip", "tc", "netns", "cap_net_admin", "session_dbus", "weaknetd", "weaknetctl", "python_venv", "dbus_next"],
+  "workload": "tcp-echo",
+  "fault": "netem-loss",
+  "fault_options": {"loss_percent": 25},
+  "warmup_seconds": 7,
+  "observation_timeout_seconds": 35,
+  "expected_incidents": ["ElevatedTcpRetransmission"],
+  "expected_hypothesis_types": ["NetworkPathDegradation"],
+  "allowed_hypothesis_types": ["NetworkPathDegradation", "InsufficientEvidence", "RemoteOrUpstreamDegradation"],
+  "allowed_statuses": ["Degraded"],
+  "recovery": false,
+  "recovery_timeout_seconds": 20,
+  "require_nonhealthy_status": true
+}

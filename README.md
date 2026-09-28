@@ -6,6 +6,8 @@ WeakNet AI Diagnostics 是一个面向 Linux 环境的网络诊断与弱网监�
 
 当前仓库标识为 `WeakNet-AI-Diagnostics`，整理为首次公开发布版本。项目重点保留已经完成部署验证的服务端、客户端、DBus 通信、网卡检测、健康检查和 Ping 功能。
 
+可复现的 V2 实网诊断场景与结构化评估入口见 [`lab/README.md`](lab/README.md)。该工具仅修改独立网络命名空间中的实验资源，缺少权限时明确 `SKIP`，默认不运行可选 AI。
+
 当前已完成 V2 Phase 1 构建基线：现有 V1 运行时使用 CMake 和 C++20 构建，并具有可选 eBPF 构建、确定性 CTest、C ABI 与 D-Bus 静态契约测试。运行时架构和 D-Bus 接口仍保持 V1，不代表后续 V2 组件已经实现。完整构建说明见 [`docs/BUILDING.md`](docs/BUILDING.md)。
 
 ## 功能特性
@@ -144,6 +146,7 @@ sequenceDiagram
 ├── logs/
 │   ├── config/
 │   └── server/
+├── lab/                     # isolated live scenarios and evaluation harness
 ├── optional/
 │   └── experimental/
 │       └── log-analysis-tools/

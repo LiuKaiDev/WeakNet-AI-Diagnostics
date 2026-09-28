@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+lab_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+repo_dir=$(CDPATH= cd -- "$lab_dir/.." && pwd)
+
+python_bin="$repo_dir/.venv/bin/python"
+if [[ ! -x "$python_bin" ]]; then
+    python_bin=$(command -v python3 || true)
+fi
+if [[ -z "$python_bin" ]]; then
+    echo "weaknet-lab: Python 3 is required for lab orchestration" >&2
+    exit 1
+fi
+
+export PYTHONPATH="$repo_dir${PYTHONPATH:+:$PYTHONPATH}"
+exec "$python_bin" -m lab.weaknet_lab.runner "$@"

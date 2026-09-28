@@ -425,6 +425,16 @@ Tests:
 
 ## Phase 11: Reproducible WeakNet Lab
 
+Status (Stage A, 2026-09-28): implemented for a bounded initial scenario set.
+The harness provides scoped namespace/veth lifecycle management, capability
+doctor and exact `SKIP` reasons, real daemon/D-Bus/CLI execution, versioned
+scenario metadata, structured evaluation artifacts, optional AI validation,
+idempotent cleanup, and offline self-tests. The initial live set covers a
+healthy control, sustained RTT, TCP retransmission, authoritative uplink
+removal/recovery, and observability degradation. Broader jitter/reordering/
+duplication/bandwidth/IPv6 coverage remains future work and is not implied by
+Stage A.
+
 Objective: make end-to-end behavior repeatable and reviewable.
 
 Scope:
