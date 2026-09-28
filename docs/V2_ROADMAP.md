@@ -495,6 +495,12 @@ small explicit corpus, and provides offline-testable BM25, optional dense
 embeddings/FAISS, RRF, reranking, capabilities, and evaluation metrics. It
 does not inject context into Qwen; that remains AI V2.3B.
 
+AI V2.3A.2 completes the curated root-cause coverage matrix, including
+authoritative uplink availability, and supports explicit local BGE model paths
+with offline-only loading. The real BGE smoke remains environment-gated: model
+weights are never committed and require an available trusted cache or model
+source.
+
 Objective: provide a read-only advisory explanation product after the
 deterministic core and export schema are stable.
 

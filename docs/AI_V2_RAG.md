@@ -30,6 +30,20 @@ Chunking is Markdown-section aware, paragraph preserving, bounded by
 `max_chars`, and uses bounded overlap only for long paragraphs. Ordering is
 stable.
 
+The curated root-cause coverage matrix is:
+
+| Root-cause type | Corpus coverage |
+| --- | --- |
+| `UplinkAvailabilityProblem` | `topology-path-semantics` — authoritative uplink state and topology checks |
+| `LocalRoutingProblem` | `topology-path-semantics` — route conflict/unavailable boundaries |
+| `NetworkPathDegradation` | `topology-path-semantics`, `root-cause-semantics` — TCP/path evidence |
+| `RemoteOrUpstreamDegradation` | `root-cause-semantics`, `probe-wifi-semantics`, `topology-path-semantics` — beyond-gateway attribution |
+| `LocalLinkSuspected` | `root-cause-semantics`, `probe-wifi-semantics` — Wi-Fi/link evidence |
+| `InsufficientEvidence` | `root-cause-semantics`, `probe-wifi-semantics` — missing observations and uncertainty |
+
+The matrix is represented in the manifest through each document's
+`applicable_root_causes`; it is not inferred from arbitrary repository files.
+
 ## Retrieval stages
 
 The standard-library BM25 implementation uses deterministic tokenization,
@@ -46,6 +60,18 @@ preserves native ranks/scores, and tie-breaks by stable chunk ID. A bounded
 reranker receives only the fusion pool; fake and lazy BGE implementations are
 provided. Final output is a versioned `RetrievalBundle` whose citation identity
 is `document_id/chunk_id@source_version`.
+
+`BgeEmbeddingModel` and `BgeReranker` accept either a Hugging Face repository ID
+or an explicit local filesystem path through the existing model environment
+variables. Absolute and explicit relative paths are loaded with
+`local_files_only=True`; a missing local path raises immediately and never
+falls back to a repository download or a different checkpoint.
+
+In the current validation environment, the CPU packages installed successfully
+but the Hugging Face endpoint was unreachable, so neither configured BGE
+checkpoint was loaded. The real end-to-end smoke therefore remains explicitly
+`RAG LIVE SKIP` until those exact weights are placed in a trusted local cache or
+an approved model source becomes available.
 
 ## Capabilities and lifecycle
 

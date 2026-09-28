@@ -394,6 +394,14 @@ The evaluation helpers report Recall@K and reciprocal rank separately per
 stage. AI V2.3B will decide how (and whether) retrieved citations are used by
 Qwen; this stage does not do that.
 
+The V2.3A.2 corpus is intentionally small and mapped in the knowledge manifest
+to all six current RootCauseEngine output types. In particular,
+`topology-path-semantics` covers authoritative uplink availability, route
+conflicts, modeled-path limitations, and beyond-gateway attribution. BGE model
+IDs or local filesystem paths may be supplied through the two RAG model
+environment variables; local paths use offline-only loading and fail explicitly
+when incomplete. Model weights and generated indexes stay outside Git.
+
 ## Three end-to-end traces to perform
 
 ### Trace A: route switch

@@ -5,6 +5,16 @@ from typing import Iterable, Protocol
 import hashlib
 import math
 import os
+from pathlib import Path
+
+
+def _local_model_path(model_name: str) -> Path | None:
+    candidate = Path(model_name).expanduser()
+    # Repository IDs contain a slash too, so only absolute/explicit relative
+    # paths (or an existing path) are treated as local model references.
+    if candidate.is_absolute() or model_name.startswith((".", "~")) or candidate.exists():
+        return candidate
+    return None
 
 
 class EmbeddingModel(Protocol):
@@ -34,11 +44,16 @@ class BgeEmbeddingModel:
     """Sentence-transformers BGE adapter; imports the heavy stack only on use."""
     def __init__(self, model_name: str | None = None, *, device: str | None = None) -> None:
         self.model_name = model_name or os.environ.get("WEAKNET_RAG_EMBEDDING_MODEL", "BAAI/bge-m3")
+        local_path = _local_model_path(self.model_name)
+        if local_path is not None and not local_path.is_dir():
+            raise FileNotFoundError(f"local embedding model path does not exist: {local_path}")
         try:
             from sentence_transformers import SentenceTransformer  # type: ignore
         except ImportError as exc:
             raise RuntimeError("sentence-transformers is not installed") from exc
         kwargs = {"device": device} if device else {}
+        if local_path is not None:
+            kwargs["local_files_only"] = True
         self._model = SentenceTransformer(self.model_name, **kwargs)
         self.dimension = int(self._model.get_sentence_embedding_dimension())
 

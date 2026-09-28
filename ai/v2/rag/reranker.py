@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Iterable, Protocol
 import re
 import os
+from pathlib import Path
 from .schemas import RetrievalHit
 
 
@@ -28,11 +29,15 @@ class FakeReranker:
 class BgeReranker:
     def __init__(self, model_name: str | None = None) -> None:
         self.model_name = model_name or os.environ.get("WEAKNET_RAG_RERANKER_MODEL", "BAAI/bge-reranker-v2-m3")
+        local_path = Path(self.model_name).expanduser()
+        is_local = local_path.is_absolute() or self.model_name.startswith((".", "~")) or local_path.exists()
+        if is_local and not local_path.is_dir():
+            raise FileNotFoundError(f"local reranker model path does not exist: {local_path}")
         try:
             from sentence_transformers import CrossEncoder  # type: ignore
         except ImportError as exc:
             raise RuntimeError("sentence-transformers is not installed") from exc
-        self._model = CrossEncoder(self.model_name)
+        self._model = CrossEncoder(self.model_name, local_files_only=is_local)
 
     def rerank(self, query: str, hits: Iterable[RetrievalHit]) -> list[RetrievalHit]:
         result = list(hits)

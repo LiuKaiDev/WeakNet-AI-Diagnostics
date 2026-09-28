@@ -1,16 +1,20 @@
 import unittest
 import tempfile
+from unittest.mock import patch
 
 from ai.tests.fixtures import insufficient_evidence, local_link_suspected, remote_upstream_degradation
 from ai.v2.schemas.diagnosis import Evidence, EvidenceRole
 from ai.v2.rag.bm25 import BM25Retriever
 from ai.v2.rag.chunking import chunk_documents
 from ai.v2.rag.embeddings import FakeEmbeddingModel
+from ai.v2.rag.embeddings import BgeEmbeddingModel
 from ai.v2.rag.evaluation import recall_at_k, reciprocal_rank
 from ai.v2.rag.fusion import reciprocal_rank_fusion
 from ai.v2.rag.knowledge import CorpusManifest, load_documents, default_manifest_path
+from ai.v2.rag.schemas import KnowledgeDocument
 from ai.v2.rag.query_planner import RagQueryPlanner
 from ai.v2.rag.reranker import FakeReranker
+from ai.v2.rag.reranker import BgeReranker
 from ai.v2.rag.retriever import HybridRetriever, RetrievalConfig
 from ai.v2.rag.faiss_index import VectorIndex
 from ai.v2.rag.faiss_index import IndexErrorRag
@@ -50,6 +54,34 @@ class RagTests(unittest.TestCase):
         self.assertEqual(first, second)
         self.assertTrue(all(chunk.source for chunk in self.chunks))
         self.assertTrue(all(len(chunk.text) <= 1800 for chunk in self.chunks))
+        original = load_documents(CorpusManifest.load(default_manifest_path()), root=default_manifest_path().parent)[0]
+        changed = KnowledgeDocument(document_id=original.document_id, title=original.title, source=original.source,
+                                    source_type=original.source_type, version="changed", content=original.content,
+                                    tags=original.tags, applicable_root_causes=original.applicable_root_causes)
+        self.assertNotEqual(chunk_documents([original])[0].chunk_id, chunk_documents([changed])[0].chunk_id)
+
+    def test_root_cause_coverage_matrix_includes_all_engine_types(self):
+        manifest = CorpusManifest.load(default_manifest_path())
+        documents = load_documents(manifest, root=default_manifest_path().parent)
+        covered = {item for document in documents for item in document.applicable_root_causes}
+        expected = {"UplinkAvailabilityProblem", "LocalRoutingProblem", "NetworkPathDegradation",
+                    "RemoteOrUpstreamDegradation", "LocalLinkSuspected", "InsufficientEvidence"}
+        self.assertTrue(expected.issubset(covered))
+        uplink = next(document for document in documents if document.document_id == "topology-path-semantics")
+        self.assertIn("UplinkAvailabilityProblem", uplink.applicable_root_causes)
+        self.assertIn("authoritative", uplink.content.lower())
+
+    def test_local_model_paths_fail_without_network_or_fallback(self):
+        with self.assertRaises(FileNotFoundError):
+            BgeEmbeddingModel("/definitely/missing/weaknet-bge")
+        with self.assertRaises(FileNotFoundError):
+            BgeReranker("/definitely/missing/weaknet-reranker")
+        with patch.dict("os.environ", {"WEAKNET_RAG_EMBEDDING_MODEL": "/definitely/missing/from-env"}, clear=False):
+            with self.assertRaises(FileNotFoundError):
+                BgeEmbeddingModel()
+        with patch.dict("os.environ", {"WEAKNET_RAG_RERANKER_MODEL": "/definitely/missing/reranker-from-env"}, clear=False):
+            with self.assertRaises(FileNotFoundError):
+                BgeReranker()
 
     def test_bm25_and_ties(self):
         hits = BM25Retriever(self.chunks).search("weak wifi signal", top_k=2)

@@ -1,7 +1,8 @@
 {
-  "corpus_version": "weaknet-local-2026.09",
+  "corpus_version": "weaknet-local-2026.09.1",
   "documents": [
-    {"id": "root-cause-semantics", "path": "root_cause_semantics.md", "title": "Root cause semantics", "source": "docs/ROOT_CAUSE_ENGINE.md", "source_type": "repository-document", "version": "1", "tags": ["diagnosis", "root-cause"]},
-    {"id": "probe-wifi-semantics", "path": "probe_wifi_semantics.md", "title": "Probe and Wi-Fi evidence semantics", "source": "docs/ACTIVE_PROBE.md + docs/WIFI_EVIDENCE.md", "source_type": "repository-document", "version": "1", "tags": ["active-probe", "wifi", "evidence"]}
+    {"id": "root-cause-semantics", "path": "root_cause_semantics.md", "title": "Root cause semantics", "source": "docs/ROOT_CAUSE_ENGINE.md", "source_type": "repository-document", "version": "1", "tags": ["diagnosis", "root-cause"], "applicable_root_causes": ["InsufficientEvidence", "LocalLinkSuspected", "RemoteOrUpstreamDegradation"]},
+    {"id": "probe-wifi-semantics", "path": "probe_wifi_semantics.md", "title": "Probe and Wi-Fi evidence semantics", "source": "docs/ACTIVE_PROBE.md + docs/WIFI_EVIDENCE.md", "source_type": "repository-document", "version": "1", "tags": ["active-probe", "wifi", "evidence"], "applicable_root_causes": ["InsufficientEvidence", "LocalLinkSuspected", "RemoteOrUpstreamDegradation"]},
+    {"id": "topology-path-semantics", "path": "topology_path_semantics.md", "title": "Topology and path availability semantics", "source": "docs/ROOT_CAUSE_ENGINE.md + docs/V2_API_AND_CLI.md", "source_type": "repository-document", "version": "1", "tags": ["topology", "routing", "root-cause", "active-probe", "evidence"], "applicable_root_causes": ["LocalRoutingProblem", "NetworkPathDegradation", "RemoteOrUpstreamDegradation", "UplinkAvailabilityProblem"]}
   ]
 }
